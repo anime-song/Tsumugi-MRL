@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 812" width="1320" height="812">
+<defs>
+  <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7078"/></marker>
+  <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#8d5a8a"/></marker>
+</defs>
+<style>
+  text { font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .bt { font-size: 12.5px; font-weight: 650; text-anchor: middle; }
+  .bs { font-size: 11px; fill: #55595f; text-anchor: middle; }
+  .bm { font-size: 10.5px; text-anchor: middle; opacity: .85;
+         font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+  .band { font-size: 11px; font-weight: 700; letter-spacing: .09em; }
+  .tag { font-size: 10px; }
+  .h1 { font-size: 21px; font-weight: 700; fill: #1c1f24; text-anchor: middle; }
+  .h2 { font-size: 12.5px; fill: #63676e; text-anchor: middle; }
+  .lg { font-size: 10.5px; fill: #63676e; }
+</style>
+<rect width="1320" height="812" fill="#ffffff"/>
+<text x="660.0" y="40" class="h1">Tsumugi-MRL &#8212; masked audio pretraining with an acoustic and a symbolic teacher</text>
+<text x="660.0" y="62" class="h2">One shared audio Transformer is trained by two frozen teachers: RVQ code prediction on masked frames, plus audio&#8211;MIDI clip contrast.</text>
+<rect x="210" y="104" width="780" height="118" rx="14" fill="#fdf7f3" stroke="#b3603a" stroke-opacity=".35" stroke-dasharray="6 5"/>
+<text x="226" y="125" class="band" fill="#b3603a">ACOUSTIC TEACHER · Mel-RVQ (frozen)</text>
+<rect x="210" y="254" width="780" height="250" rx="14" fill="#f4f8fd" stroke="#2f6ba8" stroke-opacity=".35" stroke-dasharray="6 5"/>
+<text x="226" y="275" class="band" fill="#2f6ba8">STUDENT · masked audio encoder (trained)</text>
+<rect x="210" y="552" width="780" height="144" rx="14" fill="#f2f9f5" stroke="#3c8560" stroke-opacity=".35" stroke-dasharray="6 5"/>
+<text x="226" y="573" class="band" fill="#3c8560">SYMBOLIC TEACHER · MIDI event Transformer (frozen)</text>
+<rect x="36" y="330" width="150" height="122" rx="9" fill="#f0f1f3" stroke="#5b5f66" stroke-width="1.4"/>
+<text x="111.0" y="365.5" class="bt" fill="#5b5f66">Paired clip</text>
+<text x="111.0" y="380.5" class="bs">crop_pretraining_window</text>
+<text x="111.0" y="395.5" class="bs">30 s @ 22.05 kHz</text>
+<text x="111.0" y="410.5" class="bs">stereo audio + MIDI</text>
+<text x="111.0" y="425.5" class="bm" fill="#5b5f66">B ≥ 2 pairs</text>
+<rect x="230" y="132" width="168" height="76" rx="9" fill="#fbeee7" stroke="#b3603a" stroke-width="1.4"/>
+<text x="314.0" y="159.5" class="bt" fill="#b3603a">Unmasked audio</text>
+<text x="314.0" y="174.5" class="bs">same clip, no mask</text>
+<text x="314.0" y="189.5" class="bm" fill="#b3603a">[B, 2, S]</text>
+<rect x="422" y="132" width="168" height="76" rx="9" fill="#fbeee7" stroke="#b3603a" stroke-width="1.4"/>
+<text x="506.0" y="159.5" class="bt" fill="#b3603a">Mel-RVQ tokenizer</text>
+<text x="506.0" y="174.5" class="bs">log-Mel → encoder → RVQ</text>
+<text x="506.0" y="189.5" class="bm" fill="#b3603a">8 codebooks × 1024</text>
+<rect x="806" y="132" width="168" height="76" rx="9" fill="#fbeee7" stroke="#b3603a" stroke-width="1.4"/>
+<text x="890.0" y="159.5" class="bt" fill="#b3603a">Acoustic targets</text>
+<text x="890.0" y="174.5" class="bs">discrete, stop-grad</text>
+<text x="890.0" y="189.5" class="bm" fill="#b3603a">[B, Tₐ, 8]</text>
+<rect x="230" y="352" width="168" height="76" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
+<text x="314.0" y="372.0" class="bt" fill="#2f6ba8">Stereo Mel frontend</text>
+<text x="314.0" y="387.0" class="bs">128 mels, hop 441</text>
+<text x="314.0" y="402.0" class="bs">fold × 2 → 25 Hz</text>
+<text x="314.0" y="417.0" class="bm" fill="#2f6ba8">[B, Tₐ, 512]</text>
+<rect x="422" y="352" width="168" height="76" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
+<text x="506.0" y="372.0" class="bt" fill="#2f6ba8">Span masking</text>
+<text x="506.0" y="387.0" class="bs">learned mask token</text>
+<text x="506.0" y="402.0" class="bs">ratio 0.5, span 10</text>
+<text x="506.0" y="417.0" class="bm" fill="#2f6ba8">mask [B, Tₐ]</text>
+<rect x="614" y="352" width="168" height="76" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
+<text x="698.0" y="372.0" class="bt" fill="#2f6ba8">Audio Transformer</text>
+<text x="698.0" y="387.0" class="bs">8 layers, d = 512</text>
+<text x="698.0" y="402.0" class="bs">8 heads, RoPE</text>
+<text x="698.0" y="417.0" class="bm" fill="#2f6ba8">hidden [B, Tₐ, 512]</text>
+<rect x="806" y="291" width="168" height="58" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
+<text x="890.0" y="317.0" class="bt" fill="#2f6ba8">Acoustic head</text>
+<text x="890.0" y="332.0" class="bm" fill="#2f6ba8">8 × 1024 logits</text>
+<rect x="806" y="361" width="168" height="58" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
+<text x="890.0" y="387.0" class="bt" fill="#2f6ba8">Musical head</text>
+<text x="890.0" y="402.0" class="bm" fill="#2f6ba8">4 × 512 logits</text>
+<rect x="806" y="431" width="168" height="58" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
+<text x="890.0" y="457.0" class="bt" fill="#2f6ba8">Mean-pool + MLP</text>
+<text x="890.0" y="472.0" class="bm" fill="#2f6ba8">z_audio [B, 256]</text>
+<rect x="230" y="586" width="168" height="76" rx="9" fill="#e7f3ec" stroke="#3c8560" stroke-width="1.4"/>
+<text x="314.0" y="606.0" class="bt" fill="#3c8560">MIDI event tokens</text>
+<text x="314.0" y="621.0" class="bs">pitch / beat / chord</text>
+<text x="314.0" y="636.0" class="bs">bass / key / meter</text>
+<text x="314.0" y="651.0" class="bm" fill="#3c8560">[B, L]</text>
+<rect x="422" y="586" width="168" height="76" rx="9" fill="#e7f3ec" stroke="#3c8560" stroke-width="1.4"/>
+<text x="506.0" y="613.5" class="bt" fill="#3c8560">Symbolic encoder</text>
+<text x="506.0" y="628.5" class="bs">4 layers, d = 256</text>
+<text x="506.0" y="643.5" class="bm" fill="#3c8560">[B, L, 256]</text>
+<rect x="614" y="586" width="168" height="76" rx="9" fill="#e7f3ec" stroke="#3c8560" stroke-width="1.4"/>
+<text x="698.0" y="613.5" class="bt" fill="#3c8560">FRAME_t gather + RVQ</text>
+<text x="698.0" y="628.5" class="bs">anchors → 25 Hz frames</text>
+<text x="698.0" y="643.5" class="bm" fill="#3c8560">4 codebooks × 512</text>
+<rect x="806" y="586" width="168" height="76" rx="9" fill="#e7f3ec" stroke="#3c8560" stroke-width="1.4"/>
+<text x="890.0" y="613.5" class="bt" fill="#3c8560">Musical targets</text>
+<text x="890.0" y="628.5" class="bs">+ pooled clip embedding</text>
+<text x="890.0" y="643.5" class="bm" fill="#3c8560">[B, Tₛ, 4]  /  z_midi</text>
+<rect x="1030" y="162" width="236" height="76" rx="9" fill="#f1ecf7" stroke="#7a5a9b" stroke-width="1.4"/>
+<text x="1148.0" y="189.5" class="bt" fill="#7a5a9b">L_acoustic</text>
+<text x="1148.0" y="204.5" class="bs">cross entropy on masked frames</text>
+<text x="1148.0" y="219.5" class="bm" fill="#7a5a9b">weight 1.0</text>
+<rect x="1030" y="356" width="236" height="76" rx="9" fill="#f1ecf7" stroke="#7a5a9b" stroke-width="1.4"/>
+<text x="1148.0" y="383.5" class="bt" fill="#7a5a9b">L_musical</text>
+<text x="1148.0" y="398.5" class="bs">cross entropy on masked frames</text>
+<text x="1148.0" y="413.5" class="bm" fill="#7a5a9b">weight 0.5</text>
+<rect x="1030" y="550" width="236" height="76" rx="9" fill="#f1ecf7" stroke="#7a5a9b" stroke-width="1.4"/>
+<text x="1148.0" y="577.5" class="bt" fill="#7a5a9b">L_contrastive</text>
+<text x="1148.0" y="592.5" class="bs">symmetric InfoNCE, in-batch</text>
+<text x="1148.0" y="607.5" class="bm" fill="#7a5a9b">τ = 0.07, weight 0.2</text>
+<rect x="1030" y="648" width="236" height="48" rx="9" fill="#f1ecf7" stroke="#7a5a9b" stroke-width="1.4"/>
+<text x="1148.0" y="676.5" class="bt" fill="#7a5a9b">L = 1.0·L_ac + 0.5·L_mu + 0.2·L_con</text>
+<path d="M 186 358 L 206 358 L 206 170 L 230 170" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 186 391 L 230 391" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 186 424 L 206 424 L 206 624 L 230 624" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 398 170 L 422 170" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 590 170 L 806 170" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 398 390 L 422 390" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 590 390 L 614 390" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 782 390 L 794 390 L 794 320 L 806 320" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 782 390 L 794 390 L 794 390 L 806 390" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 782 390 L 794 390 L 794 460 L 806 460" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 398 624 L 422 624" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 590 624 L 614 624" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 782 624 L 806 624" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 974 170 L 996 170 L 996 186 L 1030 186" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 974 320 L 1012 320 L 1012 214 L 1030 214" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 974 610 L 996 610 L 996 380 L 1030 380" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<path d="M 974 390 L 1012 390 L 1012 404 L 1030 404" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 974 460 L 1012 460 L 1012 574 L 1030 574" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 974 640 L 1004 640 L 1004 602 L 1030 602" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M 1266 200 L 1288 200" fill="none" stroke="#8d5a8a" stroke-width="1.4"/>
+<path d="M 1266 394 L 1288 394" fill="none" stroke="#8d5a8a" stroke-width="1.4"/>
+<path d="M 1266 588 L 1288 588" fill="none" stroke="#8d5a8a" stroke-width="1.4"/>
+<path d="M 1288 200 L 1288 672" fill="none" stroke="#8d5a8a" stroke-width="1.4"/>
+<path d="M 1288 672 L 1266 672" fill="none" stroke="#8d5a8a" stroke-width="1.4" marker-end="url(#s)"/>
+<text x="884" y="240" class="tag" fill="#b3603a" text-anchor="middle">stop-gradient</text>
+<text x="860" y="540" class="tag" fill="#3c8560" text-anchor="middle">stop-gradient (its projection stays trainable)</text>
+<text x="496" y="486" class="tag" fill="#2f6ba8" text-anchor="middle">padded frames are excluded from attention, pooling, and losses</text>
+<rect x="36" y="730" width="1248" height="52" rx="10" fill="#fafafa" stroke="#e1e2e5"/>
+<circle cx="74" cy="756" r="11" fill="#2f6ba8"/>
+<text x="74" y="760" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">1</text>
+<text x="94" y="753" font-size="12" font-weight="650" fill="#1c1f24">Train Mel-RVQ</text>
+<text x="94" y="768" font-size="10.5" fill="#63676e">acoustic teacher</text>
+<path d="M 314 756 L 340 756" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<circle cx="370" cy="756" r="11" fill="#2f6ba8"/>
+<text x="370" y="760" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">2</text>
+<text x="390" y="753" font-size="12" font-weight="650" fill="#1c1f24">Train symbolic teacher</text>
+<text x="390" y="768" font-size="10.5" fill="#63676e">frame reconstruction + RVQ</text>
+<path d="M 610 756 L 636 756" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<circle cx="666" cy="756" r="11" fill="#2f6ba8"/>
+<text x="666" y="760" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">3</text>
+<text x="686" y="753" font-size="12" font-weight="650" fill="#1c1f24">Audio pretraining</text>
+<text x="686" y="768" font-size="10.5" fill="#63676e">the figure above</text>
+<path d="M 906 756 L 932 756" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
+<circle cx="962" cy="756" r="11" fill="#2f6ba8"/>
+<text x="962" y="760" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">4</text>
+<text x="982" y="753" font-size="12" font-weight="650" fill="#1c1f24">export_audio_model()</text>
+<text x="982" y="768" font-size="10.5" fill="#63676e">TsumugiMRLModel, teacher-free</text>
+<line x1="36" y1="712" x2="60" y2="712" stroke="#6b7078" stroke-width="1.6"/>
+<text x="66" y="716" class="lg">gradient path</text>
+<line x1="164" y1="712" x2="188" y2="712" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="194" y="716" class="lg">frozen teacher / target (no gradient)</text>
+<text x="470" y="716" class="lg">Tₐ = audio frames @ 25 Hz &#183; Tₛ = symbolic FRAME anchors @ 25 Hz &#183; L = MIDI event-token length</text>
+</svg>

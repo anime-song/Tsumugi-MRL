@@ -6,6 +6,8 @@ downstream tasks.
 
 ## How it works
 
+![Tsumugi-MRL architecture](docs/architecture.svg)
+
 During pretraining, an audio Transformer predicts acoustic and symbolic RVQ
 codes from masked audio. A contrastive objective aligns audio and MIDI clip
 embeddings. Both teachers process the corresponding unmasked clip.
@@ -13,6 +15,9 @@ embeddings. Both teachers process the corresponding unmasked clip.
 The acoustic teacher quantizes Mel features. The symbolic teacher encodes MIDI
 events and learns discrete codes by reconstructing notes, instruments, rhythm,
 chords, bass, and key.
+
+Regenerate the figure with
+`uv run python scripts/make_architecture_figure.py`.
 
 ## Extract features
 
