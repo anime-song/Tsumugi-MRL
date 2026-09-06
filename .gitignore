@@ -1,0 +1,55 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+.venv-amt/
+.venv-*/
+venv/
+env/
+ENV/
+
+# Packaging and build artifacts
+.eggs/
+*.egg-info/
+build/
+dist/
+
+# Test and coverage artifacts
+.pytest_cache/
+.pytest-tmp-*/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Local datasets, model checkpoints, and experiment logs
+/datasets/
+/checkpoints/
+/wandb/
+/outputs/
+
+# Locally downloaded tool distributions
+/tools/ffmpeg/
+
+# Logs and local environment files
+*.log
+.env
+.env.*
+!.env.example
+
+# IDE and OS files
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+
+tools/
