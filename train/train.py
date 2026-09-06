@@ -22,17 +22,25 @@ FRONTEND_SETTINGS = {"sample_rate", "audio_channels", "n_mels", "n_fft", "hop_le
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+
+    # Dataset and teacher checkpoints.
     parser.add_argument("--manifest", type=Path, default=Path("datasets/symbolic/manifest.json"))
     parser.add_argument("--mel-checkpoint", type=Path)
     parser.add_argument("--symbolic-checkpoint", type=Path)
     parser.add_argument("--config", type=Path, help="JSON audio encoder settings for a new run.")
     parser.add_argument("--resume", type=Path, help="Resume an epoch checkpoint, including both teachers.")
+
+    # Run length and output location.
     parser.add_argument("--output-dir", type=Path, default=Path("checkpoints/pretraining"))
     parser.add_argument("--epochs", type=int, default=10, help="Total number of epochs, including completed epochs.")
+
+    # Batch construction and masking.
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--crop-frames", type=int, default=750)
     parser.add_argument("--mask-ratio", type=float, default=0.5)
     parser.add_argument("--mask-span", type=int, default=10)
+
+    # Optimization and runtime settings.
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--num-workers", type=int, default=0)
@@ -46,10 +54,13 @@ def make_span_mask(padding_mask: Tensor, ratio: float, span: int) -> Tensor:
     """Mask randomly selected contiguous spans of valid audio tokens [B, T]."""
     if not 0 < ratio < 1 or span <= 0:
         raise ValueError("mask-ratio must be between 0 and 1 and mask-span must be positive.")
+
+    # Build a separate mask for each example without touching padded tokens.
     mask = torch.zeros_like(padding_mask)
     for row in range(mask.size(0)):
         length = int((~padding_mask[row]).sum().item())
         target = max(1, round(length * ratio))
+
         # Shuffle non-overlapping spans and trim the last one to the budget.
         remaining = target
         for block in torch.randperm((length + span - 1) // span).tolist():
@@ -63,21 +74,31 @@ def make_span_mask(padding_mask: Tensor, ratio: float, span: int) -> Tensor:
 
 
 def load_teachers(mel_path: Path, symbolic_path: Path, audio_settings: dict):
+    # Reject settings that cannot be applied to the audio encoder.
     unknown = audio_settings.keys() - AUDIO_SETTINGS
     if unknown:
         raise ValueError(f"Unsupported audio settings: {sorted(unknown)}")
+
+    # Load the acoustic and symbolic teacher checkpoints.
     mel = MelRVQTokenizer.from_checkpoint(mel_path)
     symbolic = torch.load(symbolic_path, map_location="cpu")
+
+    # Start with the symbolic configuration, then restore the Mel frontend
+    # and acoustic-head settings from the acoustic teacher.
     settings = dict(symbolic["config"])
-    # The Mel checkpoint defines the frontend and acoustic prediction heads;
-    # the symbolic checkpoint defines the symbolic architecture and projection.
     for field in fields(MelRVQConfig):
         if field.name in FRONTEND_SETTINGS or field.name.startswith(("acoustic_", "rvq_")):
             settings[field.name] = getattr(mel.config, field.name)
+
+    # Apply optional audio-encoder overrides for a new run.
     settings.update(audio_settings)
     config = TrainingConfig(**settings)
+
+    # Both teachers must produce targets at the same frame rate.
     if config.encoder_frame_rate != config.symbolic_frame_rate:
         raise ValueError("Mel and symbolic teacher frame rates must match.")
+
+    # Assemble the pretraining model and restore both teacher states.
     model = TsumugiMRLPretrainingModel(config)
     model.symbolic_teacher.load_state_dict(symbolic["state_dict"])
     model.set_mel_stats(*mel.mel_stats)
@@ -85,9 +106,13 @@ def load_teachers(mel_path: Path, symbolic_path: Path, audio_settings: dict):
 
 
 def pretraining_losses(model, mel_teacher, batch, criterion, mask_ratio, mask_span):
+    # Mask only valid audio frames; padding remains excluded from the target.
     audio_mask = make_span_mask(batch["audio_padding_mask"], mask_ratio, mask_span)
+
+    # The acoustic teacher sees the original, unmasked audio.
     with torch.no_grad():
         acoustic_targets = mel_teacher.encode(batch["audio"])
+
     # Keep gradients through the teacher's contrastive projection. Its encoder,
     # RVQ, and decoder are frozen by freeze(), not by a surrounding no_grad().
     output = model(
@@ -102,9 +127,15 @@ def pretraining_losses(model, mel_teacher, batch, criterion, mask_ratio, mask_sp
         symbolic_anchor_positions=batch["symbolic_anchor_positions"],
         symbolic_frame_padding_mask=batch["symbolic_frame_padding_mask"],
     )
+
+    # Select symbolic targets aligned to the audio frames in each crop.
     indices = batch["symbolic_frame_indices"].unsqueeze(-1).expand(-1, -1, output.symbolic_codes.size(-1))
     musical_targets = output.symbolic_codes.gather(1, indices)
+
+    # Exclude padded audio frames from every prediction loss.
     valid = ~batch["audio_padding_mask"]
+
+    # Combine acoustic, symbolic, and contrastive objectives.
     return criterion(
         output,
         acoustic_targets,
@@ -117,6 +148,7 @@ def pretraining_losses(model, mel_teacher, batch, criterion, mask_ratio, mask_sp
 
 
 def train(args: argparse.Namespace) -> None:
+    # Validate arguments before constructing models or loading data.
     if args.epochs <= 0 or args.batch_size < 2 or args.crop_frames <= 0:
         raise ValueError("epochs/crop-frames must be positive and batch-size must be at least 2.")
     if args.lr <= 0 or args.grad_clip <= 0 or args.log_interval <= 0 or args.num_workers < 0:
@@ -125,8 +157,12 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError("mask-ratio must be between 0 and 1 and mask-span must be positive.")
     if args.resume and any((args.config, args.mel_checkpoint, args.symbolic_checkpoint)):
         raise ValueError("--resume restores config and teachers; omit --config and teacher paths.")
+
+    # Seed the run and select the requested accelerator.
     torch.manual_seed(args.seed)
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+    # Restore a complete run, or build a new model from the teacher checkpoints.
     restored = None
     if args.resume:
         restored = torch.load(args.resume, map_location="cpu")
@@ -141,9 +177,14 @@ def train(args: argparse.Namespace) -> None:
             raise ValueError("A new run requires --mel-checkpoint and --symbolic-checkpoint.")
         settings = json.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
         model, mel = load_teachers(args.mel_checkpoint, args.symbolic_checkpoint, settings)
+
+    # Freeze the acoustic teacher and the symbolic teacher encoder. The symbolic
+    # projection remains trainable for the contrastive objective.
     model.to(device)
     mel.to(device).eval().requires_grad_(False)
     model.symbolic_teacher.freeze()
+
+    # Create the optimizer, loss function, and paired audio/MIDI data loader.
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=args.lr)
     criterion = PretrainingLoss(temperature=model.config.contrastive_temperature)
     dataset = PairedAudioDataset(args.manifest, model.config, args.crop_frames)
@@ -157,6 +198,8 @@ def train(args: argparse.Namespace) -> None:
         num_workers=args.num_workers,
         collate_fn=collate_pretraining_windows,
     )
+
+    # Restore optimizer and random state after rebuilding the training objects.
     start_epoch, step = 0, 0
     if restored:
         optimizer.load_state_dict(restored["optimizer"])
@@ -166,13 +209,21 @@ def train(args: argparse.Namespace) -> None:
             torch.cuda.set_rng_state_all(restored["cuda_rng_state"])
     if args.epochs <= start_epoch:
         raise ValueError("--epochs must exceed the number of completed epochs.")
+
+    # Prepare the checkpoint directory and report the data-loading setup.
     args.output_dir.mkdir(parents=True, exist_ok=True)
     print(f"pairs={len(dataset)} batches={len(loader)} device={device}", flush=True)
+
+    # Train one epoch at a time so every completed epoch can be resumed.
     for epoch in range(start_epoch + 1, args.epochs + 1):
         model.train()
         totals = {}
+
         for batch in loader:
+            # Move the complete collated batch to the model's device.
             batch = {key: value.to(device) for key, value in batch.items()}
+
+            # Compute the masked objectives and update trainable parameters.
             optimizer.zero_grad(set_to_none=True)
             losses = pretraining_losses(model, mel, batch, criterion, args.mask_ratio, args.mask_span)
             if not torch.isfinite(losses["loss_total"]):
@@ -181,6 +232,8 @@ def train(args: argparse.Namespace) -> None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             optimizer.step()
             step += 1
+
+            # Accumulate epoch metrics and print periodic progress.
             for name, value in losses.items():
                 totals[name] = totals.get(name, 0.0) + value.detach().item()
             if step % args.log_interval == 0:
@@ -188,9 +241,9 @@ def train(args: argparse.Namespace) -> None:
                     f"epoch={epoch} step={step} " + " ".join(f"{k}={v.detach().item():.4f}" for k, v in losses.items()),
                     flush=True,
                 )
+
+        # Average metrics and save all state needed for an exact resume.
         averages = {key: value / len(loader) for key, value in totals.items()}
-        # Epoch checkpoints include teacher weights and optimizer/RNG state so
-        # resuming does not require the original teacher checkpoint files.
         checkpoint = {
             "config": asdict(model.config),
             "state_dict": model.state_dict(),
@@ -218,6 +271,8 @@ def train(args: argparse.Namespace) -> None:
         torch.save(checkpoint, args.output_dir / f"epoch_{epoch:04d}.pt")
         torch.save(checkpoint, args.output_dir / "last.pt")
         print(f"epoch={epoch} " + " ".join(f"{k}={v:.4f}" for k, v in averages.items()), flush=True)
+
+    # Export the student without teacher and pretraining-only heads.
     model.export_audio_model().save_pretrained(args.output_dir / "audio_model")
 
 
