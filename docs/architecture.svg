@@ -1,154 +1,219 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 812" width="1320" height="812">
-<defs>
-  <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-    <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7078"/></marker>
-  <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-    <path d="M 0 0 L 10 5 L 0 10 z" fill="#8d5a8a"/></marker>
-</defs>
-<style>
-  text { font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif; }
-  .bt { font-size: 12.5px; font-weight: 650; text-anchor: middle; }
-  .bs { font-size: 11px; fill: #55595f; text-anchor: middle; }
-  .bm { font-size: 10.5px; text-anchor: middle; opacity: .85;
-         font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
-  .band { font-size: 11px; font-weight: 700; letter-spacing: .09em; }
-  .tag { font-size: 10px; }
-  .h1 { font-size: 21px; font-weight: 700; fill: #1c1f24; text-anchor: middle; }
-  .h2 { font-size: 12.5px; fill: #63676e; text-anchor: middle; }
-  .lg { font-size: 10.5px; fill: #63676e; }
-</style>
-<rect width="1320" height="812" fill="#ffffff"/>
-<text x="660.0" y="40" class="h1">Tsumugi-MRL &#8212; masked audio pretraining with an acoustic and a symbolic teacher</text>
-<text x="660.0" y="62" class="h2">One shared audio Transformer is trained by two frozen teachers: RVQ code prediction on masked frames, plus audio&#8211;MIDI clip contrast.</text>
-<rect x="210" y="104" width="780" height="118" rx="14" fill="#fdf7f3" stroke="#b3603a" stroke-opacity=".35" stroke-dasharray="6 5"/>
-<text x="226" y="125" class="band" fill="#b3603a">ACOUSTIC TEACHER · Mel-RVQ (frozen)</text>
-<rect x="210" y="254" width="780" height="250" rx="14" fill="#f4f8fd" stroke="#2f6ba8" stroke-opacity=".35" stroke-dasharray="6 5"/>
-<text x="226" y="275" class="band" fill="#2f6ba8">STUDENT · masked audio encoder (trained)</text>
-<rect x="210" y="552" width="780" height="144" rx="14" fill="#f2f9f5" stroke="#3c8560" stroke-opacity=".35" stroke-dasharray="6 5"/>
-<text x="226" y="573" class="band" fill="#3c8560">SYMBOLIC TEACHER · MIDI event Transformer (frozen)</text>
-<rect x="36" y="330" width="150" height="122" rx="9" fill="#f0f1f3" stroke="#5b5f66" stroke-width="1.4"/>
-<text x="111.0" y="365.5" class="bt" fill="#5b5f66">Paired clip</text>
-<text x="111.0" y="380.5" class="bs">crop_pretraining_window</text>
-<text x="111.0" y="395.5" class="bs">30 s @ 22.05 kHz</text>
-<text x="111.0" y="410.5" class="bs">stereo audio + MIDI</text>
-<text x="111.0" y="425.5" class="bm" fill="#5b5f66">B ≥ 2 pairs</text>
-<rect x="230" y="132" width="168" height="76" rx="9" fill="#fbeee7" stroke="#b3603a" stroke-width="1.4"/>
-<text x="314.0" y="159.5" class="bt" fill="#b3603a">Unmasked audio</text>
-<text x="314.0" y="174.5" class="bs">same clip, no mask</text>
-<text x="314.0" y="189.5" class="bm" fill="#b3603a">[B, 2, S]</text>
-<rect x="422" y="132" width="168" height="76" rx="9" fill="#fbeee7" stroke="#b3603a" stroke-width="1.4"/>
-<text x="506.0" y="159.5" class="bt" fill="#b3603a">Mel-RVQ tokenizer</text>
-<text x="506.0" y="174.5" class="bs">log-Mel → encoder → RVQ</text>
-<text x="506.0" y="189.5" class="bm" fill="#b3603a">8 codebooks × 1024</text>
-<rect x="806" y="132" width="168" height="76" rx="9" fill="#fbeee7" stroke="#b3603a" stroke-width="1.4"/>
-<text x="890.0" y="159.5" class="bt" fill="#b3603a">Acoustic targets</text>
-<text x="890.0" y="174.5" class="bs">discrete, stop-grad</text>
-<text x="890.0" y="189.5" class="bm" fill="#b3603a">[B, Tₐ, 8]</text>
-<rect x="230" y="352" width="168" height="76" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
-<text x="314.0" y="372.0" class="bt" fill="#2f6ba8">Stereo Mel frontend</text>
-<text x="314.0" y="387.0" class="bs">128 mels, hop 441</text>
-<text x="314.0" y="402.0" class="bs">fold × 2 → 25 Hz</text>
-<text x="314.0" y="417.0" class="bm" fill="#2f6ba8">[B, Tₐ, 512]</text>
-<rect x="422" y="352" width="168" height="76" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
-<text x="506.0" y="372.0" class="bt" fill="#2f6ba8">Span masking</text>
-<text x="506.0" y="387.0" class="bs">learned mask token</text>
-<text x="506.0" y="402.0" class="bs">ratio 0.5, span 10</text>
-<text x="506.0" y="417.0" class="bm" fill="#2f6ba8">mask [B, Tₐ]</text>
-<rect x="614" y="352" width="168" height="76" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
-<text x="698.0" y="372.0" class="bt" fill="#2f6ba8">Audio Transformer</text>
-<text x="698.0" y="387.0" class="bs">8 layers, d = 512</text>
-<text x="698.0" y="402.0" class="bs">8 heads, RoPE</text>
-<text x="698.0" y="417.0" class="bm" fill="#2f6ba8">hidden [B, Tₐ, 512]</text>
-<rect x="806" y="291" width="168" height="58" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
-<text x="890.0" y="317.0" class="bt" fill="#2f6ba8">Acoustic head</text>
-<text x="890.0" y="332.0" class="bm" fill="#2f6ba8">8 × 1024 logits</text>
-<rect x="806" y="361" width="168" height="58" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
-<text x="890.0" y="387.0" class="bt" fill="#2f6ba8">Musical head</text>
-<text x="890.0" y="402.0" class="bm" fill="#2f6ba8">4 × 512 logits</text>
-<rect x="806" y="431" width="168" height="58" rx="9" fill="#e9f1fa" stroke="#2f6ba8" stroke-width="1.4"/>
-<text x="890.0" y="457.0" class="bt" fill="#2f6ba8">Mean-pool + MLP</text>
-<text x="890.0" y="472.0" class="bm" fill="#2f6ba8">z_audio [B, 256]</text>
-<rect x="230" y="586" width="168" height="76" rx="9" fill="#e7f3ec" stroke="#3c8560" stroke-width="1.4"/>
-<text x="314.0" y="606.0" class="bt" fill="#3c8560">MIDI event tokens</text>
-<text x="314.0" y="621.0" class="bs">pitch / beat / chord</text>
-<text x="314.0" y="636.0" class="bs">bass / key / meter</text>
-<text x="314.0" y="651.0" class="bm" fill="#3c8560">[B, L]</text>
-<rect x="422" y="586" width="168" height="76" rx="9" fill="#e7f3ec" stroke="#3c8560" stroke-width="1.4"/>
-<text x="506.0" y="613.5" class="bt" fill="#3c8560">Symbolic encoder</text>
-<text x="506.0" y="628.5" class="bs">4 layers, d = 256</text>
-<text x="506.0" y="643.5" class="bm" fill="#3c8560">[B, L, 256]</text>
-<rect x="614" y="586" width="168" height="76" rx="9" fill="#e7f3ec" stroke="#3c8560" stroke-width="1.4"/>
-<text x="698.0" y="613.5" class="bt" fill="#3c8560">FRAME_t gather + RVQ</text>
-<text x="698.0" y="628.5" class="bs">anchors → 25 Hz frames</text>
-<text x="698.0" y="643.5" class="bm" fill="#3c8560">4 codebooks × 512</text>
-<rect x="806" y="586" width="168" height="76" rx="9" fill="#e7f3ec" stroke="#3c8560" stroke-width="1.4"/>
-<text x="890.0" y="613.5" class="bt" fill="#3c8560">Musical targets</text>
-<text x="890.0" y="628.5" class="bs">+ pooled clip embedding</text>
-<text x="890.0" y="643.5" class="bm" fill="#3c8560">[B, Tₛ, 4]  /  z_midi</text>
-<rect x="1030" y="162" width="236" height="76" rx="9" fill="#f1ecf7" stroke="#7a5a9b" stroke-width="1.4"/>
-<text x="1148.0" y="189.5" class="bt" fill="#7a5a9b">L_acoustic</text>
-<text x="1148.0" y="204.5" class="bs">cross entropy on masked frames</text>
-<text x="1148.0" y="219.5" class="bm" fill="#7a5a9b">weight 1.0</text>
-<rect x="1030" y="356" width="236" height="76" rx="9" fill="#f1ecf7" stroke="#7a5a9b" stroke-width="1.4"/>
-<text x="1148.0" y="383.5" class="bt" fill="#7a5a9b">L_musical</text>
-<text x="1148.0" y="398.5" class="bs">cross entropy on masked frames</text>
-<text x="1148.0" y="413.5" class="bm" fill="#7a5a9b">weight 0.5</text>
-<rect x="1030" y="550" width="236" height="76" rx="9" fill="#f1ecf7" stroke="#7a5a9b" stroke-width="1.4"/>
-<text x="1148.0" y="577.5" class="bt" fill="#7a5a9b">L_contrastive</text>
-<text x="1148.0" y="592.5" class="bs">symmetric InfoNCE, in-batch</text>
-<text x="1148.0" y="607.5" class="bm" fill="#7a5a9b">τ = 0.07, weight 0.2</text>
-<rect x="1030" y="648" width="236" height="48" rx="9" fill="#f1ecf7" stroke="#7a5a9b" stroke-width="1.4"/>
-<text x="1148.0" y="676.5" class="bt" fill="#7a5a9b">L = 1.0·L_ac + 0.5·L_mu + 0.2·L_con</text>
-<path d="M 186 358 L 206 358 L 206 170 L 230 170" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 186 391 L 230 391" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 186 424 L 206 424 L 206 624 L 230 624" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 398 170 L 422 170" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 590 170 L 806 170" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 398 390 L 422 390" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 590 390 L 614 390" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 782 390 L 794 390 L 794 320 L 806 320" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 782 390 L 794 390 L 794 390 L 806 390" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 782 390 L 794 390 L 794 460 L 806 460" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 398 624 L 422 624" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 590 624 L 614 624" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 782 624 L 806 624" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 974 170 L 996 170 L 996 186 L 1030 186" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 974 320 L 1012 320 L 1012 214 L 1030 214" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 974 610 L 996 610 L 996 380 L 1030 380" fill="none" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#a)"/>
-<path d="M 974 390 L 1012 390 L 1012 404 L 1030 404" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 974 460 L 1012 460 L 1012 574 L 1030 574" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 974 640 L 1004 640 L 1004 602 L 1030 602" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M 1266 200 L 1288 200" fill="none" stroke="#8d5a8a" stroke-width="1.4"/>
-<path d="M 1266 394 L 1288 394" fill="none" stroke="#8d5a8a" stroke-width="1.4"/>
-<path d="M 1266 588 L 1288 588" fill="none" stroke="#8d5a8a" stroke-width="1.4"/>
-<path d="M 1288 200 L 1288 672" fill="none" stroke="#8d5a8a" stroke-width="1.4"/>
-<path d="M 1288 672 L 1266 672" fill="none" stroke="#8d5a8a" stroke-width="1.4" marker-end="url(#s)"/>
-<text x="884" y="240" class="tag" fill="#b3603a" text-anchor="middle">stop-gradient</text>
-<text x="860" y="540" class="tag" fill="#3c8560" text-anchor="middle">stop-gradient (its projection stays trainable)</text>
-<text x="496" y="486" class="tag" fill="#2f6ba8" text-anchor="middle">padded frames are excluded from attention, pooling, and losses</text>
-<rect x="36" y="730" width="1248" height="52" rx="10" fill="#fafafa" stroke="#e1e2e5"/>
-<circle cx="74" cy="756" r="11" fill="#2f6ba8"/>
-<text x="74" y="760" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">1</text>
-<text x="94" y="753" font-size="12" font-weight="650" fill="#1c1f24">Train Mel-RVQ</text>
-<text x="94" y="768" font-size="10.5" fill="#63676e">acoustic teacher</text>
-<path d="M 314 756 L 340 756" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<circle cx="370" cy="756" r="11" fill="#2f6ba8"/>
-<text x="370" y="760" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">2</text>
-<text x="390" y="753" font-size="12" font-weight="650" fill="#1c1f24">Train symbolic teacher</text>
-<text x="390" y="768" font-size="10.5" fill="#63676e">frame reconstruction + RVQ</text>
-<path d="M 610 756 L 636 756" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<circle cx="666" cy="756" r="11" fill="#2f6ba8"/>
-<text x="666" y="760" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">3</text>
-<text x="686" y="753" font-size="12" font-weight="650" fill="#1c1f24">Audio pretraining</text>
-<text x="686" y="768" font-size="10.5" fill="#63676e">the figure above</text>
-<path d="M 906 756 L 932 756" fill="none" stroke="#6b7078" stroke-width="1.6" marker-end="url(#a)"/>
-<circle cx="962" cy="756" r="11" fill="#2f6ba8"/>
-<text x="962" y="760" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff">4</text>
-<text x="982" y="753" font-size="12" font-weight="650" fill="#1c1f24">export_audio_model()</text>
-<text x="982" y="768" font-size="10.5" fill="#63676e">TsumugiMRLModel, teacher-free</text>
-<line x1="36" y1="712" x2="60" y2="712" stroke="#6b7078" stroke-width="1.6"/>
-<text x="66" y="716" class="lg">gradient path</text>
-<line x1="164" y1="712" x2="188" y2="712" stroke="#6b7078" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="194" y="716" class="lg">frozen teacher / target (no gradient)</text>
-<text x="470" y="716" class="lg">Tₐ = audio frames @ 25 Hz &#183; Tₛ = symbolic FRAME anchors @ 25 Hz &#183; L = MIDI event-token length</text>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1456" height="1062" viewBox="0 0 1456 1062" role="img" aria-labelledby="architecture-title architecture-description">
+  <title id="architecture-title">Tsumugi-MRL architecture</title>
+  <desc id="architecture-description">Audio pretraining architecture with acoustic and symbolic teachers, a masked audio student, and three training losses.</desc>
+  <foreignObject x="0" y="0" width="1456" height="1062">
+    <div xmlns="http://www.w3.org/1999/xhtml">
+      <div style="width:1456px;height:1062px;position:relative;background:#ffffff;font-family:Inter,system-ui,sans-serif;color:#23252d;overflow:hidden">
+
+        <div style="position:absolute;left:0;top:0;width:1456px;height:88px;background:#f2f2f5;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
+          <div style="font-size:31px;font-weight:600;letter-spacing:-0.025em">Tsumugi-MRL</div>
+          <div style="font-size:14px;color:#666a78">Pretraining a music audio encoder from two frozen teachers</div>
+        </div>
+
+        <div style="position:absolute;left:24px;top:100px;width:440px;height:372px;border-radius:10px;background:oklch(0.968 0.032 85);border:1px solid oklch(0.88 0.055 85)"></div>
+        <div style="position:absolute;left:24px;top:484px;width:440px;height:456px;border-radius:10px;background:oklch(0.968 0.03 165);border:1px solid oklch(0.88 0.05 165)"></div>
+        <div style="position:absolute;left:476px;top:100px;width:956px;height:840px;border-radius:10px;background:oklch(0.969 0.022 292);border:1px solid oklch(0.88 0.045 292)"></div>
+
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1456 1062" width="1456" height="1062" style="position:absolute;left:0;top:0" aria-hidden="true">
+          <defs>
+            <marker id="s1" viewBox="0 0 10 10" refX="9.2" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M0 0.8 L10 5 L0 9.2 z" fill="#4a4e5c"></path></marker>
+            <marker id="s2" viewBox="0 0 10 10" refX="9.2" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M0 0.8 L10 5 L0 9.2 z" fill="#8a8fa0"></path></marker>
+          </defs>
+
+          <g fill="none" stroke="#4a4e5c" stroke-width="1.3" marker-end="url(#s1)">
+            <path d="M244 232 V262"></path>
+            <path d="M244 330 V358"></path>
+            <path d="M244 606 V624"></path>
+            <path d="M244 698 V714"></path>
+            <path d="M244 838 V850"></path>
+            <path d="M632 234 V262"></path>
+            <path d="M632 322 V350"></path>
+            <path d="M632 442 V458"></path>
+            <path d="M632 550 V566"></path>
+            <path d="M632 634 V650 H782 V346 H812"></path>
+            <path d="M782 650 V476 H812"></path>
+            <path d="M782 650 V606 H812"></path>
+            <path d="M1012 346 H1064"></path>
+            <path d="M1012 476 H1064"></path>
+            <path d="M1012 606 H1064"></path>
+          </g>
+
+          <g fill="none" stroke="#8a8fa0" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#s2)">
+            <path d="M344 390 H420 V246 H1120 V313"></path>
+            <path d="M344 876 H1038 V495 H1064"></path>
+            <path d="M344 876 H1038 V640 H1064"></path>
+          </g>
+
+          <g fill="none" stroke="#4a4e5c" stroke-width="1.1">
+            <path d="M1400 346 H1420"></path>
+            <path d="M1400 476 H1420"></path>
+            <path d="M1400 606 H1420"></path>
+            <path d="M1420 346 V726"></path>
+            <path d="M1420 726 H1400" marker-end="url(#s1)"></path>
+          </g>
+
+          <path d="M24 970 H1432" stroke="#dcdee5" stroke-width="1" fill="none"></path>
+        </svg>
+
+        <div style="position:absolute;left:24px;top:118px;width:440px;display:flex;flex-direction:column;align-items:center;gap:3px">
+          <div style="font-size:19px;font-weight:600;letter-spacing:-0.015em;color:oklch(0.42 0.075 70)">Acoustic teacher</div>
+          <div style="font-size:12px;color:#666a78">Mel-RVQ · trained in Stage 1 · frozen here</div>
+        </div>
+        <div style="position:absolute;left:428px;top:120px;font-size:17px;color:#6aa6c8">❄</div>
+
+        <div style="position:absolute;left:24px;top:176px;width:440px;text-align:center;font-size:11.5px;color:#666a78">audio signal, unmasked</div>
+        <div style="position:absolute;left:124px;top:196px;width:240px;height:30px">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 30" width="240" height="30"><g fill="oklch(0.62 0.075 70)"><rect x="0" y="12" width="3" height="6"></rect><rect x="6" y="9" width="3" height="12"></rect><rect x="12" y="4" width="3" height="22"></rect><rect x="18" y="0" width="3" height="30"></rect><rect x="24" y="7" width="3" height="16"></rect><rect x="30" y="2" width="3" height="26"></rect><rect x="36" y="11" width="3" height="8"></rect><rect x="42" y="6" width="3" height="18"></rect><rect x="48" y="0" width="3" height="30"></rect><rect x="54" y="3" width="3" height="24"></rect><rect x="60" y="8" width="3" height="14"></rect><rect x="66" y="1" width="3" height="28"></rect><rect x="72" y="5" width="3" height="20"></rect><rect x="78" y="12" width="3" height="6"></rect><rect x="84" y="7" width="3" height="16"></rect><rect x="90" y="2" width="3" height="26"></rect><rect x="96" y="0" width="3" height="30"></rect><rect x="102" y="6" width="3" height="18"></rect><rect x="108" y="10" width="3" height="10"></rect><rect x="114" y="1" width="3" height="28"></rect><rect x="120" y="7" width="3" height="16"></rect><rect x="126" y="12" width="3" height="6"></rect><rect x="132" y="8" width="3" height="14"></rect><rect x="138" y="13" width="3" height="4"></rect><rect x="144" y="5" width="3" height="20"></rect><rect x="150" y="0" width="3" height="30"></rect><rect x="156" y="9" width="3" height="12"></rect><rect x="162" y="3" width="3" height="24"></rect><rect x="168" y="11" width="3" height="8"></rect><rect x="174" y="6" width="3" height="18"></rect><rect x="180" y="1" width="3" height="28"></rect><rect x="186" y="8" width="3" height="14"></rect><rect x="192" y="4" width="3" height="22"></rect><rect x="198" y="12" width="3" height="6"></rect><rect x="204" y="7" width="3" height="16"></rect><rect x="210" y="2" width="3" height="26"></rect><rect x="216" y="10" width="3" height="10"></rect><rect x="222" y="5" width="3" height="20"></rect><rect x="228" y="13" width="3" height="4"></rect><rect x="234" y="9" width="3" height="12"></rect></g></svg>
+        </div>
+
+        <div style="position:absolute;left:144px;top:266px;width:200px;height:64px;background:oklch(0.86 0.09 85);clip-path:polygon(0 0,100% 0,86% 100%,14% 100%);display:flex;align-items:center;justify-content:center">
+          <div style="font-size:13.5px;font-weight:600;color:oklch(0.35 0.06 70)">Mel Encoder</div>
+        </div>
+
+        <div style="position:absolute;left:144px;top:362px;width:200px;height:56px;box-sizing:border-box;padding:0 12px;border-radius:6px;background:oklch(0.44 0.075 70);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px">
+          <div style="font-size:13px;font-weight:600;color:#ffffff">acoustic codes</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 8" width="168" height="8" style="flex:none"><g fill="#ffffff"><rect x="0" y="0" width="18" height="8" rx="1.5"></rect><rect x="21" y="0" width="18" height="8" rx="1.5" opacity="0.45"></rect><rect x="42" y="0" width="18" height="8" rx="1.5" opacity="0.8"></rect><rect x="63" y="0" width="18" height="8" rx="1.5" opacity="0.3"></rect><rect x="84" y="0" width="18" height="8" rx="1.5" opacity="0.65"></rect><rect x="105" y="0" width="18" height="8" rx="1.5" opacity="0.4"></rect><rect x="126" y="0" width="18" height="8" rx="1.5" opacity="0.9"></rect><rect x="147" y="0" width="18" height="8" rx="1.5" opacity="0.55"></rect></g></svg>
+        </div>
+        <div style="position:absolute;left:24px;top:428px;width:440px;text-align:center;font-size:11.5px;color:#666a78">8 codebooks × 1024 · one row per 25 Hz frame</div>
+
+        <div style="position:absolute;left:24px;top:502px;width:440px;display:flex;flex-direction:column;align-items:center;gap:3px">
+          <div style="font-size:19px;font-weight:600;letter-spacing:-0.015em;color:oklch(0.4 0.065 165)">Symbolic teacher</div>
+          <div style="font-size:12px;color:#666a78">MIDI event Transformer · Stage 2 · frozen here</div>
+        </div>
+        <div style="position:absolute;left:428px;top:504px;font-size:17px;color:#6aa6c8">❄</div>
+
+        <div style="position:absolute;left:24px;top:556px;width:440px;text-align:center;font-size:11.5px;color:#666a78">aligned MIDI — notes, beat, chord, key</div>
+        <div style="position:absolute;left:24px;top:916px;width:440px;text-align:center;font-size:11.5px;color:#666a78">4 codebooks × 512, plus one MIDI clip embedding</div>
+        <div style="position:absolute;left:124px;top:576px;width:240px;height:30px">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 30" width="240" height="30"><g fill="oklch(0.56 0.075 165)"><rect x="0" y="23" width="34" height="6" rx="3"></rect><rect x="40" y="15" width="24" height="6" rx="3"></rect><rect x="50" y="2" width="46" height="6" rx="3"></rect><rect x="74" y="23" width="26" height="6" rx="3"></rect><rect x="104" y="9" width="36" height="6" rx="3"></rect><rect x="118" y="23" width="18" height="6" rx="3"></rect><rect x="148" y="2" width="28" height="6" rx="3"></rect><rect x="156" y="15" width="44" height="6" rx="3"></rect><rect x="182" y="23" width="22" height="6" rx="3"></rect><rect x="208" y="9" width="32" height="6" rx="3"></rect></g></svg>
+        </div>
+
+        <div style="position:absolute;left:144px;top:630px;width:200px;height:64px;background:oklch(0.85 0.085 165);clip-path:polygon(0 0,100% 0,86% 100%,14% 100%);display:flex;align-items:center;justify-content:center">
+          <div style="font-size:13.5px;font-weight:600;color:oklch(0.33 0.055 165)">Symbolic Encoder</div>
+        </div>
+
+        <div style="position:absolute;left:124px;top:718px;width:240px;height:116px;box-sizing:border-box;padding:8px 12px 7px;border-radius:6px;background:#ffffff;border:1.2px solid oklch(0.56 0.075 165);display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div style="font-size:13.5px;font-weight:600">FRAME<sub style="font-size:9px">t</sub> queries → RVQ</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 58" width="200" height="58" style="flex:none"><g fill="oklch(0.56 0.075 165)"><rect x="0" y="0" width="13" height="9" rx="2"></rect><rect x="17" y="0" width="13" height="9" rx="2" opacity="0.62"></rect><rect x="34" y="0" width="13" height="9" rx="2" opacity="0.88"></rect><rect x="51" y="0" width="13" height="9" rx="2" opacity="0.5"></rect><rect x="68" y="0" width="13" height="9" rx="2" opacity="0.8"></rect><rect x="85" y="0" width="13" height="9" rx="2" opacity="0.58"></rect><rect x="102" y="0" width="13" height="9" rx="2" opacity="0.92"></rect><rect x="119" y="0" width="13" height="9" rx="2" opacity="0.68"></rect><rect x="136" y="0" width="13" height="9" rx="2" opacity="0.46"></rect><rect x="153" y="0" width="13" height="9" rx="2" opacity="0.84"></rect><rect x="170" y="0" width="13" height="9" rx="2" opacity="0.6"></rect><rect x="187" y="0" width="13" height="9" rx="2" opacity="0.9"></rect></g><g stroke="oklch(0.56 0.075 165)" stroke-width="0.9" fill="none" opacity="0.45"><path d="M30 27 L6.5 11"></path><path d="M30 27 L23.5 11"></path><path d="M30 27 L40.5 11"></path><path d="M100 27 L74.5 11"></path><path d="M100 27 L91.5 11"></path><path d="M100 27 L108.5 11"></path><path d="M170 27 L159.5 11"></path><path d="M170 27 L176.5 11"></path><path d="M170 27 L193.5 11"></path></g><g fill="#ffffff" stroke="oklch(0.5 0.075 165)" stroke-width="1.1"><rect x="10" y="27" width="40" height="13" rx="3"></rect><rect x="80" y="27" width="40" height="13" rx="3"></rect><rect x="150" y="27" width="40" height="13" rx="3"></rect></g><g fill="oklch(0.4 0.065 165)" font-family="Inter,sans-serif" font-size="8" font-weight="600" text-anchor="middle"><text x="30" y="36.4">FRAME₁</text><text x="100" y="36.4">FRAME₂</text><text x="170" y="36.4">FRAME₃</text></g><g stroke="oklch(0.56 0.075 165)" stroke-width="1" fill="none" opacity="0.7"><path d="M30 41 V47"></path><path d="M100 41 V47"></path><path d="M170 41 V47"></path></g><g fill="oklch(0.42 0.07 165)"><rect x="12" y="49" width="36" height="9" rx="2"></rect><rect x="82" y="49" width="36" height="9" rx="2" opacity="0.62"></rect><rect x="152" y="49" width="36" height="9" rx="2" opacity="0.85"></rect></g></svg>
+          <div style="font-size:10.5px;color:#666a78">one query per frame, then RVQ</div>
+        </div>
+        <div style="position:absolute;left:144px;top:854px;width:200px;height:56px;box-sizing:border-box;padding:0 12px;border-radius:6px;background:oklch(0.42 0.07 165);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px">
+          <div style="font-size:13px;font-weight:600;color:#ffffff">musical codes</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 8" width="168" height="8" style="flex:none"><g fill="#ffffff"><rect x="0" y="0" width="38" height="8" rx="1.5"></rect><rect x="43" y="0" width="38" height="8" rx="1.5" opacity="0.5"></rect><rect x="86" y="0" width="38" height="8" rx="1.5" opacity="0.82"></rect><rect x="129" y="0" width="38" height="8" rx="1.5" opacity="0.35"></rect></g></svg>
+        </div>
+
+        <div style="position:absolute;left:476px;top:118px;width:956px;display:flex;flex-direction:column;align-items:center;gap:3px">
+          <div style="font-size:19px;font-weight:600;letter-spacing:-0.015em;color:#5d5294">Audio student — Stage 3, the model being trained</div>
+          <div style="font-size:12px;color:#666a78">sees a masked clip; must predict what the teachers saw in the unmasked one</div>
+        </div>
+
+        <div style="position:absolute;left:512px;top:176px;width:240px;text-align:center;font-size:11.5px;color:#666a78">the same audio signal</div>
+        <div style="position:absolute;left:512px;top:196px;width:240px;height:32px">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 32" width="240" height="32"><g fill="#9184d9"><rect x="0" y="13" width="3" height="6"></rect><rect x="6" y="10" width="3" height="12"></rect><rect x="12" y="5" width="3" height="22"></rect><rect x="18" y="1" width="3" height="30"></rect><rect x="24" y="8" width="3" height="16"></rect><rect x="30" y="3" width="3" height="26"></rect><rect x="36" y="12" width="3" height="8"></rect><rect x="42" y="7" width="3" height="18"></rect><rect x="48" y="1" width="3" height="30"></rect><rect x="54" y="4" width="3" height="24"></rect><rect x="60" y="9" width="3" height="14"></rect><rect x="66" y="2" width="3" height="28"></rect><rect x="72" y="6" width="3" height="20"></rect><rect x="78" y="13" width="3" height="6"></rect><rect x="84" y="8" width="3" height="16"></rect><rect x="90" y="3" width="3" height="26"></rect><rect x="96" y="1" width="3" height="30"></rect><rect x="102" y="7" width="3" height="18"></rect><rect x="108" y="11" width="3" height="10"></rect><rect x="114" y="2" width="3" height="28"></rect><rect x="120" y="8" width="3" height="16"></rect><rect x="126" y="13" width="3" height="6"></rect><rect x="132" y="9" width="3" height="14"></rect><rect x="138" y="14" width="3" height="4"></rect><rect x="144" y="6" width="3" height="20"></rect><rect x="150" y="1" width="3" height="30"></rect><rect x="156" y="10" width="3" height="12"></rect><rect x="162" y="4" width="3" height="24"></rect><rect x="168" y="12" width="3" height="8"></rect><rect x="174" y="7" width="3" height="18"></rect><rect x="180" y="2" width="3" height="28"></rect><rect x="186" y="9" width="3" height="14"></rect><rect x="192" y="5" width="3" height="22"></rect><rect x="198" y="13" width="3" height="6"></rect><rect x="204" y="8" width="3" height="16"></rect><rect x="210" y="3" width="3" height="26"></rect><rect x="216" y="11" width="3" height="10"></rect><rect x="222" y="6" width="3" height="20"></rect><rect x="228" y="14" width="3" height="4"></rect><rect x="234" y="10" width="3" height="12"></rect></g></svg>
+        </div>
+
+        <div style="position:absolute;left:512px;top:266px;width:240px;height:56px;box-sizing:border-box;padding:0 12px;border-radius:6px;background:#ffffff;border:1.2px solid #9184d9;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px">
+          <div style="font-size:13.5px;font-weight:600">Stereo Mel frontend</div>
+          <div style="font-size:11px;color:#666a78">128 mels, hop 441 → 25 Hz</div>
+        </div>
+
+        <div style="position:absolute;left:512px;top:354px;width:240px;height:88px;box-sizing:border-box;padding:8px 12px 7px;border-radius:6px;background:#ffffff;border:1.2px solid #9184d9;display:flex;flex-direction:column;align-items:center;gap:5px">
+          <div style="font-size:13.5px;font-weight:600">Span masking</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 22" width="200" height="22" style="flex:none"><g fill="#9184d9" opacity="0.75"><rect x="0" y="0" width="9" height="22" rx="2"></rect><rect x="11" y="0" width="9" height="22" rx="2"></rect><rect x="22" y="0" width="9" height="22" rx="2"></rect><rect x="88" y="0" width="9" height="22" rx="2"></rect><rect x="99" y="0" width="9" height="22" rx="2"></rect><rect x="154" y="0" width="9" height="22" rx="2"></rect><rect x="165" y="0" width="9" height="22" rx="2"></rect><rect x="176" y="0" width="9" height="22" rx="2"></rect><rect x="187" y="0" width="9" height="22" rx="2"></rect></g><g fill="#efecfb" stroke="#5d5294" stroke-width="1.1" stroke-dasharray="3.5 2.5"><rect x="33.5" y="0.5" width="52" height="21" rx="2"></rect><rect x="110.5" y="0.5" width="41" height="21" rx="2"></rect></g></svg>
+          <div style="font-size:10.5px;color:#666a78">spans of 10 frames → mask token</div>
+        </div>
+
+        <div style="position:absolute;left:512px;top:462px;width:240px;height:64px;background:#cfc7f2;clip-path:polygon(0 0,100% 0,86% 100%,14% 100%);display:flex;align-items:center;justify-content:center">
+          <div style="font-size:13.5px;font-weight:600;color:#3c356b">Audio Transformer</div>
+        </div>
+        <div style="position:absolute;left:512px;top:530px;width:240px;text-align:center;font-size:11px;color:#666a78">8 layers · d = 512 · 8 heads · RoPE</div>
+        <div style="position:absolute;left:512px;top:570px;width:240px;height:64px;box-sizing:border-box;padding:7px 12px 6px;border-radius:6px;background:#ffffff;border:1.2px solid #9184d9;display:flex;flex-direction:column;align-items:center;gap:5px">
+          <div style="font-size:13px;font-weight:600">frame representations</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 22" width="200" height="22" style="flex:none"><g fill="#9184d9"><rect x="0" y="0" width="14" height="4.5" rx="1"></rect><rect x="0" y="5.8" width="14" height="4.5" rx="1" opacity="0.6"></rect><rect x="0" y="11.6" width="14" height="4.5" rx="1" opacity="0.85"></rect><rect x="0" y="17.4" width="14" height="4.5" rx="1" opacity="0.4"></rect><rect x="18.6" y="0" width="14" height="4.5" rx="1" opacity="0.55"></rect><rect x="18.6" y="5.8" width="14" height="4.5" rx="1" opacity="0.9"></rect><rect x="18.6" y="11.6" width="14" height="4.5" rx="1" opacity="0.35"></rect><rect x="18.6" y="17.4" width="14" height="4.5" rx="1" opacity="0.7"></rect><rect x="37.2" y="0" width="14" height="4.5" rx="1" opacity="0.8"></rect><rect x="37.2" y="5.8" width="14" height="4.5" rx="1" opacity="0.45"></rect><rect x="37.2" y="11.6" width="14" height="4.5" rx="1"></rect><rect x="37.2" y="17.4" width="14" height="4.5" rx="1" opacity="0.5"></rect><rect x="55.8" y="0" width="14" height="4.5" rx="1" opacity="0.4"></rect><rect x="55.8" y="5.8" width="14" height="4.5" rx="1" opacity="0.75"></rect><rect x="55.8" y="11.6" width="14" height="4.5" rx="1" opacity="0.55"></rect><rect x="55.8" y="17.4" width="14" height="4.5" rx="1" opacity="0.9"></rect><rect x="74.4" y="0" width="14" height="4.5" rx="1" opacity="0.65"></rect><rect x="74.4" y="5.8" width="14" height="4.5" rx="1" opacity="0.3"></rect><rect x="74.4" y="11.6" width="14" height="4.5" rx="1" opacity="0.8"></rect><rect x="74.4" y="17.4" width="14" height="4.5" rx="1" opacity="0.45"></rect><rect x="93" y="0" width="14" height="4.5" rx="1" opacity="0.9"></rect><rect x="93" y="5.8" width="14" height="4.5" rx="1" opacity="0.5"></rect><rect x="93" y="11.6" width="14" height="4.5" rx="1" opacity="0.65"></rect><rect x="93" y="17.4" width="14" height="4.5" rx="1"></rect><rect x="111.6" y="0" width="14" height="4.5" rx="1" opacity="0.35"></rect><rect x="111.6" y="5.8" width="14" height="4.5" rx="1" opacity="0.85"></rect><rect x="111.6" y="11.6" width="14" height="4.5" rx="1" opacity="0.45"></rect><rect x="111.6" y="17.4" width="14" height="4.5" rx="1" opacity="0.7"></rect><rect x="130.2" y="0" width="14" height="4.5" rx="1" opacity="0.75"></rect><rect x="130.2" y="5.8" width="14" height="4.5" rx="1" opacity="0.4"></rect><rect x="130.2" y="11.6" width="14" height="4.5" rx="1" opacity="0.9"></rect><rect x="130.2" y="17.4" width="14" height="4.5" rx="1" opacity="0.55"></rect><rect x="148.8" y="0" width="14" height="4.5" rx="1" opacity="0.5"></rect><rect x="148.8" y="5.8" width="14" height="4.5" rx="1" opacity="0.7"></rect><rect x="148.8" y="11.6" width="14" height="4.5" rx="1" opacity="0.35"></rect><rect x="148.8" y="17.4" width="14" height="4.5" rx="1" opacity="0.85"></rect><rect x="167.4" y="0" width="14" height="4.5" rx="1" opacity="0.85"></rect><rect x="167.4" y="5.8" width="14" height="4.5" rx="1" opacity="0.45"></rect><rect x="167.4" y="11.6" width="14" height="4.5" rx="1" opacity="0.6"></rect><rect x="167.4" y="17.4" width="14" height="4.5" rx="1" opacity="0.3"></rect><rect x="186" y="0" width="14" height="4.5" rx="1" opacity="0.6"></rect><rect x="186" y="5.8" width="14" height="4.5" rx="1" opacity="0.9"></rect><rect x="186" y="11.6" width="14" height="4.5" rx="1" opacity="0.4"></rect><rect x="186" y="17.4" width="14" height="4.5" rx="1" opacity="0.75"></rect></g></svg>
+        </div>
+
+        <div style="position:absolute;left:812px;top:300px;width:200px;height:92px;box-sizing:border-box;padding:8px 12px 7px;border-radius:6px;background:#ffffff;border:1.2px solid #9184d9;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div style="font-size:13.5px;font-weight:600">Acoustic head</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176 32" width="176" height="32" style="flex:none"><g fill="none" stroke="#b5abfc" stroke-width="1" stroke-dasharray="3 2"><rect x="0.5" y="0.5" width="47" height="31"></rect><rect x="64.5" y="0.5" width="47" height="31"></rect><rect x="128.5" y="0.5" width="47" height="31"></rect></g><g fill="#9184d9"><rect x="6" y="3" width="36" height="3" rx="1"></rect><rect x="6" y="6.6" width="36" height="3" rx="1" opacity="0.55"></rect><rect x="6" y="10.2" width="36" height="3" rx="1" opacity="0.85"></rect><rect x="6" y="13.8" width="36" height="3" rx="1" opacity="0.35"></rect><rect x="6" y="17.4" width="36" height="3" rx="1" opacity="0.7"></rect><rect x="6" y="21" width="36" height="3" rx="1" opacity="0.45"></rect><rect x="6" y="24.6" width="36" height="3" rx="1" opacity="0.9"></rect><rect x="6" y="28.2" width="36" height="3" rx="1" opacity="0.6"></rect><rect x="70" y="3" width="36" height="3" rx="1" opacity="0.6"></rect><rect x="70" y="6.6" width="36" height="3" rx="1" opacity="0.9"></rect><rect x="70" y="10.2" width="36" height="3" rx="1" opacity="0.4"></rect><rect x="70" y="13.8" width="36" height="3" rx="1" opacity="0.75"></rect><rect x="70" y="17.4" width="36" height="3" rx="1" opacity="0.5"></rect><rect x="70" y="21" width="36" height="3" rx="1"></rect><rect x="70" y="24.6" width="36" height="3" rx="1" opacity="0.55"></rect><rect x="70" y="28.2" width="36" height="3" rx="1" opacity="0.8"></rect><rect x="134" y="3" width="36" height="3" rx="1" opacity="0.45"></rect><rect x="134" y="6.6" width="36" height="3" rx="1" opacity="0.8"></rect><rect x="134" y="10.2" width="36" height="3" rx="1" opacity="0.6"></rect><rect x="134" y="13.8" width="36" height="3" rx="1" opacity="0.95"></rect><rect x="134" y="17.4" width="36" height="3" rx="1" opacity="0.35"></rect><rect x="134" y="21" width="36" height="3" rx="1" opacity="0.7"></rect><rect x="134" y="24.6" width="36" height="3" rx="1" opacity="0.5"></rect><rect x="134" y="28.2" width="36" height="3" rx="1" opacity="0.85"></rect></g></svg>
+          <div style="font-size:10.5px;color:#666a78">8 codes per masked frame</div>
+        </div>
+
+        <div style="position:absolute;left:812px;top:430px;width:200px;height:92px;box-sizing:border-box;padding:8px 12px 7px;border-radius:6px;background:#ffffff;border:1.2px solid #9184d9;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div style="font-size:13.5px;font-weight:600">Musical head</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176 32" width="176" height="32" style="flex:none"><g fill="none" stroke="#b5abfc" stroke-width="1" stroke-dasharray="3 2"><rect x="0.5" y="0.5" width="47" height="31"></rect><rect x="64.5" y="0.5" width="47" height="31"></rect><rect x="128.5" y="0.5" width="47" height="31"></rect></g><g fill="#9184d9"><rect x="6" y="4" width="36" height="5.5" rx="1.5"></rect><rect x="6" y="11" width="36" height="5.5" rx="1.5" opacity="0.5"></rect><rect x="6" y="18" width="36" height="5.5" rx="1.5" opacity="0.85"></rect><rect x="6" y="25" width="36" height="5.5" rx="1.5" opacity="0.35"></rect><rect x="70" y="4" width="36" height="5.5" rx="1.5" opacity="0.6"></rect><rect x="70" y="11" width="36" height="5.5" rx="1.5" opacity="0.9"></rect><rect x="70" y="18" width="36" height="5.5" rx="1.5" opacity="0.4"></rect><rect x="70" y="25" width="36" height="5.5" rx="1.5" opacity="0.75"></rect><rect x="134" y="4" width="36" height="5.5" rx="1.5" opacity="0.45"></rect><rect x="134" y="11" width="36" height="5.5" rx="1.5" opacity="0.7"></rect><rect x="134" y="18" width="36" height="5.5" rx="1.5" opacity="0.95"></rect><rect x="134" y="25" width="36" height="5.5" rx="1.5" opacity="0.55"></rect></g></svg>
+          <div style="font-size:10.5px;color:#666a78">4 codes per masked frame</div>
+        </div>
+
+        <div style="position:absolute;left:812px;top:560px;width:200px;height:92px;box-sizing:border-box;padding:8px 12px 7px;border-radius:6px;background:#ffffff;border:1.2px solid #9184d9;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <div style="font-size:13.5px;font-weight:600">Mean-pool + MLP</div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176 32" width="176" height="32" style="flex:none"><g fill="#9184d9" opacity="0.55"><rect x="0" y="0" width="12" height="14" rx="1.5"></rect><rect x="14" y="0" width="12" height="14" rx="1.5" opacity="0.7"></rect><rect x="28" y="0" width="12" height="14" rx="1.5" opacity="0.5"></rect><rect x="42" y="0" width="12" height="14" rx="1.5" opacity="0.85"></rect><rect x="56" y="0" width="12" height="14" rx="1.5" opacity="0.6"></rect><rect x="70" y="0" width="12" height="14" rx="1.5" opacity="0.9"></rect><rect x="84" y="0" width="12" height="14" rx="1.5" opacity="0.45"></rect><rect x="98" y="0" width="12" height="14" rx="1.5" opacity="0.75"></rect><rect x="112" y="0" width="12" height="14" rx="1.5" opacity="0.55"></rect><rect x="126" y="0" width="12" height="14" rx="1.5" opacity="0.8"></rect><rect x="140" y="0" width="12" height="14" rx="1.5" opacity="0.5"></rect><rect x="154" y="0" width="12" height="14" rx="1.5" opacity="0.7"></rect></g><g stroke="#9184d9" stroke-width="1" fill="none" opacity="0.6"><path d="M88 15 V19"></path></g><g fill="#5d5294"><rect x="52" y="20" width="72" height="12" rx="3"></rect></g><g fill="#ffffff" font-family="Inter,sans-serif" font-size="8" font-weight="600" text-anchor="middle"><text x="88" y="28.6">256-d</text></g></svg>
+          <div style="font-size:10.5px;color:#666a78">one embedding per clip</div>
+        </div>
+
+        <div style="position:absolute;left:1064px;top:313px;width:336px;height:66px;box-sizing:border-box;padding:0 16px;border-radius:6px;background:#ffffff;border:1.2px solid #4a4e5c;display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div style="min-width:0">
+            <div style="font-size:13.5px;font-weight:600">Acoustic loss</div>
+            <div style="font-size:11px;color:#666a78">cross entropy on masked frames</div>
+          </div>
+          <div style="flex:none;font-size:12px;font-weight:600;color:#4a4e5c">× 1.0</div>
+        </div>
+
+        <div style="position:absolute;left:1064px;top:443px;width:336px;height:66px;box-sizing:border-box;padding:0 16px;border-radius:6px;background:#ffffff;border:1.2px solid #4a4e5c;display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div style="min-width:0">
+            <div style="font-size:13.5px;font-weight:600">Musical loss</div>
+            <div style="font-size:11px;color:#666a78">cross entropy on masked frames</div>
+          </div>
+          <div style="flex:none;font-size:12px;font-weight:600;color:#4a4e5c">× 0.5</div>
+        </div>
+
+        <div style="position:absolute;left:1064px;top:558px;width:336px;height:96px;box-sizing:border-box;padding:0 16px;border-radius:6px;background:#ffffff;border:1.2px solid #4a4e5c;display:flex;align-items:center;gap:14px">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:baseline;gap:8px"><div style="font-size:13.5px;font-weight:600">Contrastive loss</div><div style="font-size:12px;font-weight:600;color:#4a4e5c">× 0.2</div></div>
+            <div style="font-size:11px;color:#666a78;line-height:1.35">symmetric InfoNCE, τ = 0.07 — each clip must match its own MIDI, not the others in the batch</div>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" width="56" height="56" style="flex:none"><g fill="#4a4e5c"><rect x="0" y="0" width="12.5" height="12.5" rx="1.5"></rect><rect x="14.5" y="14.5" width="12.5" height="12.5" rx="1.5"></rect><rect x="29" y="29" width="12.5" height="12.5" rx="1.5"></rect><rect x="43.5" y="43.5" width="12.5" height="12.5" rx="1.5"></rect></g><g fill="none" stroke="#d3d6de" stroke-width="1"><path d="M14 0 V56"></path><path d="M28.5 0 V56"></path><path d="M43 0 V56"></path><path d="M0 14 H56"></path><path d="M0 28.5 H56"></path><path d="M0 43 H56"></path></g></svg>
+        </div>
+
+        <div style="position:absolute;left:1064px;top:700px;width:336px;height:52px;box-sizing:border-box;border-radius:6px;background:#443c73;display:flex;align-items:center;justify-content:center">
+          <div style="font-size:15px;font-weight:600;color:#ffffff;white-space:nowrap">total loss = 1.0 ac + 0.5 mu + 0.2 con</div>
+        </div>
+
+        <div style="position:absolute;left:850px;top:222px;font-size:11.5px;color:#7a7f90">acoustic code targets</div>
+        <div style="position:absolute;left:640px;top:852px;font-size:11.5px;color:#7a7f90;background:oklch(0.969 0.022 292);padding:0 6px">musical code targets + MIDI clip embedding</div>
+
+
+          <div style="position:absolute;left:512px;top:890px;width:900px;font-size:11px;color:#7a7f90;line-height:1.45;text-wrap:pretty">audio [B, 2, S] · frame representations [B, T, 512] · acoustic codes [B, T, 8] · musical codes [B, T, 4] · embeddings [B, 256], T frames at 25 Hz. Padded frames are excluded from attention, pooling and every loss.</div>
+
+
+
+          <div style="position:absolute;left:24px;top:988px;width:1408px;display:flex;align-items:center;gap:0;font-size:12px">
+            <div style="display:flex;align-items:center;gap:9px;flex:1;min-width:0">
+              <div style="flex:none;width:20px;height:20px;border-radius:10px;background:oklch(0.62 0.075 70);color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">1</div>
+              <div style="min-width:0"><div style="font-weight:600">Train Mel-RVQ</div><div style="color:#666a78">acoustic teacher</div></div>
+            </div>
+            <div style="flex:none;width:26px;height:1.2px;background:#c9ccd6;margin:0 8px"></div>
+            <div style="display:flex;align-items:center;gap:9px;flex:1.1;min-width:0">
+              <div style="flex:none;width:20px;height:20px;border-radius:10px;background:oklch(0.56 0.075 165);color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">2</div>
+              <div style="min-width:0"><div style="font-weight:600">Train symbolic teacher</div><div style="color:#666a78">frame reconstruction + RVQ</div></div>
+            </div>
+            <div style="flex:none;width:26px;height:1.2px;background:#c9ccd6;margin:0 8px"></div>
+            <div style="display:flex;align-items:center;gap:9px;flex:1;min-width:0">
+              <div style="flex:none;width:20px;height:20px;border-radius:10px;background:#5d5294;color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">3</div>
+              <div style="min-width:0"><div style="font-weight:600">Audio pretraining</div><div style="color:#666a78">this figure</div></div>
+            </div>
+            <div style="flex:none;width:26px;height:1.2px;background:#c9ccd6;margin:0 8px"></div>
+            <div style="display:flex;align-items:center;gap:9px;flex:1.2;min-width:0">
+              <div style="flex:none;width:20px;height:20px;border-radius:10px;background:#23252d;color:#fff;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">4</div>
+              <div style="min-width:0"><div style="font-weight:600">export_audio_model()</div><div style="color:#666a78">teacher-free TsumugiMRLModel</div></div>
+            </div>
+            <div style="flex:none;display:flex;flex-direction:column;gap:6px;margin-left:22px;color:#666a78;font-size:11px">
+              <div style="display:flex;align-items:center;gap:7px;white-space:nowrap"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 8" width="24" height="8"><path d="M0 4 H24" stroke="#4a4e5c" stroke-width="1.3" fill="none"></path></svg>gradients flow</div>
+              <div style="display:flex;align-items:center;gap:7px;white-space:nowrap"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 8" width="24" height="8"><path d="M0 4 H24" stroke="#8a8fa0" stroke-width="1.3" stroke-dasharray="5 4" fill="none"></path></svg>targets only, no gradient</div>
+            </div>
+          </div>
+
+
+      </div>
+    </div>
+  </foreignObject>
 </svg>
