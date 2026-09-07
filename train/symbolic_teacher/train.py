@@ -43,6 +43,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", default=None)
+    parser.add_argument(
+        "--amp-dtype",
+        choices=("auto", "float16", "bfloat16"),
+        default="auto",
+        help="CUDA AMP dtype; auto prefers native bfloat16 and falls back to float16.",
+    )
+    parser.add_argument(
+        "--compile-encoder",
+        action="store_true",
+        help="Compile only the SymbolicEncoder Transformer with torch.compile.",
+    )
+    parser.add_argument(
+        "--compile-mode",
+        default="default",
+        help="torch.compile mode for --compile-encoder.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--gradient-checkpointing",
@@ -98,34 +114,58 @@ def train(args: argparse.Namespace) -> None:
         collate_fn=collate_symbolic_sequences,
     )
     teacher = SymbolicTeacher(config).to(device)
+    if args.compile_encoder:
+        # Compile only the event Transformer while preserving checkpoint keys.
+        teacher.encoder.encoder.forward = torch.compile(
+            teacher.encoder.encoder.forward,
+            mode=args.compile_mode,
+        )
     criterion = SymbolicTeacherLoss(config.symbolic_reconstruction_weight)
     optimizer = torch.optim.AdamW(teacher.parameters(), lr=args.lr)
+    use_amp = device.type == "cuda"
+    amp_dtype = torch.float32
+    if use_amp:
+        if args.amp_dtype == "auto":
+            amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported(including_emulation=False) else torch.float16
+        elif args.amp_dtype == "bfloat16":
+            amp_dtype = torch.bfloat16
+        else:
+            amp_dtype = torch.float16
+    use_grad_scaler = use_amp and amp_dtype == torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
 
     source = args.midi_dir if args.midi_dir is not None else args.token_dir
     crop = f"{args.crop_frames} frames" if args.crop_frames > 0 else "whole song"
-    print(f"source={source} files={len(dataset)} crop={crop} device={device} batch_size={args.batch_size}")
+    print(
+        f"source={source} files={len(dataset)} crop={crop} device={device} "
+        f"batch_size={args.batch_size} amp={use_amp} amp_dtype={amp_dtype}"
+    )
     for epoch in range(1, args.epochs + 1):
         teacher.train()
         total = 0.0
         for batch in loader:
-            output = teacher(
-                batch["token_ids"].to(device),
-                anchor_positions=batch["anchor_positions"].to(device),
-                token_instrument_ids=batch["token_instrument_ids"].to(device),
-                token_type_ids=batch["token_type_ids"].to(device),
-                padding_mask=batch["padding_mask"].to(device),
-                position_ids=batch["position_ids"].to(device),
-                frame_padding_mask=batch["frame_padding_mask"].to(device),
-            )
-            loss_values = criterion(
-                output,
-                batch["targets"].to(device),
-                frame_padding_mask=batch["frame_padding_mask"].to(device),
-            )
             optimizer.zero_grad(set_to_none=True)
-            loss_values["loss_total"].backward()
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                output = teacher(
+                    batch["token_ids"].to(device),
+                    anchor_positions=batch["anchor_positions"].to(device),
+                    token_instrument_ids=batch["token_instrument_ids"].to(device),
+                    token_type_ids=batch["token_type_ids"].to(device),
+                    padding_mask=batch["padding_mask"].to(device),
+                    position_ids=batch["position_ids"].to(device),
+                    frame_padding_mask=batch["frame_padding_mask"].to(device),
+                )
+                loss_values = criterion(
+                    output,
+                    batch["targets"].to(device),
+                    frame_padding_mask=batch["frame_padding_mask"].to(device),
+                )
+            scaler.scale(loss_values["loss_total"]).backward()
+            # Clip true gradients after removing the loss scale.
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(teacher.parameters(), args.grad_clip)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             total += float(loss_values["loss_total"].detach())
 
         average = total / max(1, len(loader))

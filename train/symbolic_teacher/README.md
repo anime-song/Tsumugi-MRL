@@ -48,8 +48,15 @@ and the musical state at the start of the window.
 
 Use `--batch-size` to change the batch size (default: 1). Add
 `--gradient-checkpointing` to reduce activation memory at the cost of additional
-computation. To train directly from MIDI, replace `--token-dir` with
-`--midi-dir datasets/symbolic/midi`. Run with `--help` for all options.
+computation. Training automatically uses CUDA AMP when `--device cuda` (or the
+default CUDA device selection) is active. `--amp-dtype auto` (the default)
+selects native BF16 when supported and otherwise uses FP16; pass `float16` or
+`bfloat16` to override it. CPU training remains in FP32. To train directly from
+MIDI, replace `--token-dir` with `--midi-dir datasets/symbolic/midi`. Add
+`--compile-encoder` to compile only the symbolic event Transformer; use
+`--compile-mode` to select the `torch.compile` mode. Run with `--help` for all
+options. On Windows with a non-UTF-8 locale, set `PYTHONUTF8=1` before starting
+a compiled run.
 
 ## Use the teacher
 
