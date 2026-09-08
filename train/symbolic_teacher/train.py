@@ -181,9 +181,7 @@ def _build_symbolic_loss_weights(
         positive = statistics["binary"][name]["positive"]
         negative = statistics["binary"][name]["negative"]
         # Cap rare-event weights as in the AMT pair-gate loss to avoid unstable updates.
-        binary_pos_weights[name] = (
-            negative / positive.clamp_min(1.0)
-        ).clamp(1.0, max_note_pos_weight).float()
+        binary_pos_weights[name] = (negative / positive.clamp_min(1.0)).clamp(1.0, max_note_pos_weight).float()
     categorical_class_counts = {name: counts.float() for name, counts in statistics["categorical"].items()}
     return binary_pos_weights, categorical_class_counts
 
@@ -301,7 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-note-pos-weight",
         type=float,
-        default=50.0,
+        default=10.0,
         help="Upper bound for the data-derived note onset/offset positive weights.",
     )
     parser.add_argument(
