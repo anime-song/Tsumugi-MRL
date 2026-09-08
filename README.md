@@ -30,8 +30,8 @@ from tsumugi_mrl import TsumugiMRLModel
 
 model = TsumugiMRLModel.from_pretrained("checkpoints/pretraining/audio_model").eval()
 with torch.no_grad():
-    hidden = model(audio)                     # [B, T, D], audio is [B, 2, samples]
-    embedding = model.encode_embedding(audio) # [B, projection_dim], normalized
+    hidden = model(audio)  # [B, T, D], audio is [B, 2, samples]
+    embedding = model.encode_embedding(audio)  # [B, projection_dim], normalized
 ```
 
 
@@ -57,7 +57,8 @@ teacher.
 
 ## Audio pretraining
 
-Train with the preparation manifest and both teacher checkpoints:
+Train with the preparation manifest and both teacher checkpoints. The default
+`contrastive` mode uses all three objectives:
 
 ```powershell
 uv run --extra train python -m train.train `
@@ -65,15 +66,21 @@ uv run --extra train python -m train.train `
   --mel-checkpoint checkpoints/mel_rvq/last.pt `
   --symbolic-checkpoint checkpoints/symbolic_teacher/last.pt `
   --output-dir checkpoints/pretraining `
-  --batch-size 4 --epochs 10
+  --batch-size 4 --epochs 10 --ablation contrastive
 ```
 
-The loop samples paired 30-second clips, masks half the audio tokens in spans
-of 10, and optimizes acoustic prediction, symbolic prediction, and contrastive
-losses with weights 1.0, 0.5, and 0.2. Set `--crop-frames`, `--mask-ratio`, and
-`--mask-span` to change cropping and masking. Batches require at least two
-pairs; the final incomplete batch is dropped. Short clips are padded, and
-padding is excluded from attention, pooling, and prediction losses.
+Use `--ablation` to select the cumulative objective set:
+
+* `mel_rvq`: Mel-RVQ acoustic prediction only; `--symbolic-checkpoint` is not
+  required.
+* `symbolic_teacher`: acoustic prediction plus symbolic RVQ code prediction.
+* `contrastive`: the previous two objectives plus Audio--MIDI contrastive loss.
+
+The default loss weights are 1.0, 0.5, and 0.2, respectively. Set
+`--crop-frames`, `--mask-ratio`, and `--mask-span` to change cropping and
+masking. Batches require at least two pairs; the final incomplete batch is
+dropped. Short clips are padded, and padding is excluded from attention,
+pooling, and prediction losses.
 
 Each epoch saves `last.pt` and `epoch_XXXX.pt`. After training, the exported
 audio model is saved in `checkpoints/pretraining/audio_model` and can be loaded
@@ -89,9 +96,9 @@ uv run --extra train python -m train.train `
 ```
 
 `--epochs` is the total epoch count. Resume restores both teachers, model
-settings, optimizer, random state, and training settings (batch size, cropping,
-masking, learning rate, gradient clipping, and worker count). Use the same
-manifest to continue on the same dataset.
+settings, optimizer, random state, and training settings (including the
+ablation mode, batch size, cropping, masking, learning rate, gradient clipping,
+and worker count). Use the same manifest to continue on the same dataset.
 
 For a new run, `--config path/to/audio_config.json` overrides audio encoder
 settings: `d_model`, `n_heads`, `num_layers`, `dim_feedforward`, `dropout`, and
@@ -126,8 +133,7 @@ model = TsumugiMRLPretrainingModel(TrainingConfig())
 model.symbolic_teacher.freeze()  # fixes teacher, leaves its projection trainable
 model.set_mel_stats(*mel_teacher.mel_stats)
 model.train()
-window = crop_pretraining_window(full_audio, sequence, start_frame=250,
-                                 num_frames=750, config=model.config)
+window = crop_pretraining_window(full_audio, sequence, start_frame=250, num_frames=750, config=model.config)
 batch = collate_symbolic_sequences([window.symbolic])
 output = model(
     window.audio.unsqueeze(0),

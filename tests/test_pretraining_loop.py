@@ -19,12 +19,24 @@ from tsumugi_mrl import TsumugiMRLModel
 
 @pytest.fixture
 def training_files(tmp_path):
-    config = TrainingConfig(n_mels=8, n_fft=512, d_model=16, n_heads=2,
-                            num_layers=1, dim_feedforward=32, dropout=0.0,
-                            symbolic_d_model=16, symbolic_heads=2, symbolic_layers=1,
-                            symbolic_dim_feedforward=32, projection_dim=8,
-                            acoustic_codebooks=2, acoustic_vocab_size=8,
-                            musical_codebooks=2, musical_vocab_size=8)
+    config = TrainingConfig(
+        n_mels=8,
+        n_fft=512,
+        d_model=16,
+        n_heads=2,
+        num_layers=1,
+        dim_feedforward=32,
+        dropout=0.0,
+        symbolic_d_model=16,
+        symbolic_heads=2,
+        symbolic_layers=1,
+        symbolic_dim_feedforward=32,
+        projection_dim=8,
+        acoustic_codebooks=2,
+        acoustic_vocab_size=8,
+        musical_codebooks=2,
+        musical_vocab_size=8,
+    )
     mel = MelRVQTokenizer(config)
     mel.set_mel_stats(-10.0, 5.0)
     mel_path = tmp_path / "mel.pt"
@@ -77,6 +89,70 @@ def test_padded_batch_updates_student_and_projection_only(training_files):
     assert not model.symbolic_teacher.encoder.training
 
 
+def test_ablation_modes_select_only_requested_losses(training_files):
+    config, manifest, mel_path, symbolic_path = training_files
+    dataset = PairedAudioDataset(manifest, config, crop_frames=20)
+    batch = collate_pretraining_windows([dataset[0], dataset[1]])
+    expected_losses = {
+        "mel_rvq": {"loss_total", "loss_acoustic"},
+        "symbolic_teacher": {"loss_total", "loss_acoustic", "loss_musical"},
+        "contrastive": {"loss_total", "loss_acoustic", "loss_musical", "loss_contrastive"},
+    }
+
+    for ablation, expected in expected_losses.items():
+        use_symbolic = ablation != "mel_rvq"
+        model, mel = load_teachers(
+            mel_path,
+            symbolic_path if use_symbolic else None,
+            {},
+            use_symbolic=use_symbolic,
+        )
+        model.symbolic_teacher.freeze(train_projection=ablation == "contrastive")
+        mel.requires_grad_(False)
+        model.train()
+        losses = pretraining_losses(
+            model,
+            mel,
+            batch,
+            PretrainingLoss(),
+            0.5,
+            3,
+            ablation=ablation,
+        )
+        assert set(losses) == expected
+        assert torch.isfinite(losses["loss_total"])
+
+
+def test_mel_rvq_ablation_trains_without_symbolic_checkpoint(training_files, tmp_path):
+    _, manifest, mel_path, _ = training_files
+    output_dir = tmp_path / "mel_only"
+    args = build_parser().parse_args(
+        [
+            "--manifest",
+            str(manifest),
+            "--mel-checkpoint",
+            str(mel_path),
+            "--ablation",
+            "mel_rvq",
+            "--output-dir",
+            str(output_dir),
+            "--epochs",
+            "1",
+            "--batch-size",
+            "2",
+            "--crop-frames",
+            "20",
+            "--device",
+            "cpu",
+        ]
+    )
+    train(args)
+
+    checkpoint = torch.load(output_dir / "last.pt", map_location="cpu")
+    assert checkpoint["training_settings"]["ablation"] == "mel_rvq"
+    assert set(checkpoint["losses"]) == {"loss_acoustic", "loss_total"}
+
+
 def test_span_mask_excludes_padding():
     padding = torch.tensor([[False] * 13 + [True] * 7, [False] * 20])
     mask = make_span_mask(padding, 0.5, 4)
@@ -89,13 +165,29 @@ def test_span_mask_excludes_padding():
 def test_training_resume_matches_uninterrupted_run_and_exports(training_files, tmp_path):
     _, manifest, mel_path, symbolic_path = training_files
     parser = build_parser()
+
     def run(output, epochs, resume=None):
-        arguments = ["--manifest", str(manifest), "--output-dir", str(output),
-                     "--epochs", str(epochs), "--batch-size", "2", "--crop-frames", "20",
-                     "--device", "cpu"]
-        arguments += (["--resume", str(resume)] if resume else
-                      ["--mel-checkpoint", str(mel_path), "--symbolic-checkpoint", str(symbolic_path)])
+        arguments = [
+            "--manifest",
+            str(manifest),
+            "--output-dir",
+            str(output),
+            "--epochs",
+            str(epochs),
+            "--batch-size",
+            "2",
+            "--crop-frames",
+            "20",
+            "--device",
+            "cpu",
+        ]
+        arguments += (
+            ["--resume", str(resume)]
+            if resume
+            else ["--mel-checkpoint", str(mel_path), "--symbolic-checkpoint", str(symbolic_path)]
+        )
         train(parser.parse_args(arguments))
+
     continuous = tmp_path / "continuous"
     resumed = tmp_path / "resumed"
     run(continuous, 2)

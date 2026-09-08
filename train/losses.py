@@ -1,4 +1,4 @@
-"""Losses for the three Tsumugi-MRL pretraining paths."""
+"""Losses for the Tsumugi-MRL pretraining paths."""
 
 from typing import Optional
 
@@ -181,7 +181,7 @@ class SymbolicTeacherLoss(nn.Module):
 
 
 class PretrainingLoss(nn.Module):
-    """Weighted sum of acoustic MLM, musical MLM, and Audio--MIDI contrastive loss."""
+    """Weighted sum of the selected audio pretraining objectives."""
 
     def __init__(
         self,
@@ -200,11 +200,13 @@ class PretrainingLoss(nn.Module):
         self,
         output,
         acoustic_targets: Tensor,
-        musical_targets: Tensor,
+        musical_targets: Optional[Tensor] = None,
         acoustic_mask: Optional[Tensor] = None,
         musical_mask: Optional[Tensor] = None,
         acoustic_valid_mask: Optional[Tensor] = None,
         musical_valid_mask: Optional[Tensor] = None,
+        use_musical: bool = True,
+        use_contrastive: bool = True,
     ) -> dict[str, Tensor]:
         acoustic = masked_multicodebook_cross_entropy(
             output.acoustic_logits,
@@ -212,20 +214,24 @@ class PretrainingLoss(nn.Module):
             mask=acoustic_mask,
             valid_mask=acoustic_valid_mask,
         )
-        musical = masked_multicodebook_cross_entropy(
-            output.musical_logits,
-            musical_targets,
-            mask=musical_mask,
-            valid_mask=musical_valid_mask,
-        )
-
-        total = self.acoustic_weight * acoustic + self.musical_weight * musical
         result = {
             "loss_acoustic": acoustic,
-            "loss_musical": musical,
         }
+        total = self.acoustic_weight * acoustic
 
-        if output.symbolic_embedding is not None:
+        if use_musical:
+            if musical_targets is None:
+                raise ValueError("musical_targets are required when use_musical=True.")
+            musical = masked_multicodebook_cross_entropy(
+                output.musical_logits,
+                musical_targets,
+                mask=musical_mask,
+                valid_mask=musical_valid_mask,
+            )
+            total = total + self.musical_weight * musical
+            result["loss_musical"] = musical
+
+        if use_contrastive and output.symbolic_embedding is not None:
             contrastive = symmetric_info_nce(
                 output.audio_embedding,
                 output.symbolic_embedding,
