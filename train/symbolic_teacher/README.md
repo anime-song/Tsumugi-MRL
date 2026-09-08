@@ -42,9 +42,27 @@ Training saves `last.pt` and `epoch_XXXX.pt` in the output directory.
 The teacher reconstructs notes, instruments, rhythm, chords, bass, and key
 from the tokenized MIDI.
 
+For Weights & Biases logging, run `uv run --extra train wandb login` and add
+`--wandb` to the training command. Set `--wandb-project`, `--wandb-name`, and
+`--wandb-entity` to customize the run. Step metrics are logged every 10 steps
+by default; use `--log-interval` to change that interval.
+
 `--crop-frames` sets the training window length (default: 750 frames, or
 30 seconds). Use `--crop-frames 0` for whole songs. Crops retain held notes
 and the musical state at the start of the window.
+
+By default, 10% of the symbolic files are held out for validation. Change the
+split with `--val-ratio`, or use `--val-ratio 0` to disable validation. Each
+validation epoch reports reconstruction loss, note onset/offset F1, chord
+macro-F1, beat/downbeat F1, and RVQ code perplexity. The split is made at the
+file level so validation files are not used for training.
+
+The first run counts sparse and long-tail labels from the training windows and
+caches them as `symbolic_loss_stats.pt`. Note onset/offset use capped positive
+weights (50 by default; try `--max-note-pos-weight 100` for a more aggressive
+run), beat/downbeat default to AMT-style weights of 5 and 20, and chord/meter
+use AMT-style balanced-softmax correction with `--balanced-softmax-tau 0.3`.
+Use `--recompute-loss-stats` after changing the training data or split.
 
 Use `--batch-size` to change the batch size (default: 1). Add
 `--gradient-checkpointing` to reduce activation memory at the cost of additional

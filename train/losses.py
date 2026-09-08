@@ -70,6 +70,9 @@ def symbolic_frame_reconstruction_loss(
     predictions: dict[str, Tensor],
     targets: SymbolicFrameTargets,
     frame_padding_mask: Optional[Tensor] = None,
+    binary_pos_weights: Optional[dict[str, Tensor]] = None,
+    categorical_class_counts: Optional[dict[str, Tensor]] = None,
+    balanced_softmax_tau: float = 0.0,
 ) -> dict[str, Tensor]:
     """Reconstruct MIDI information from the ``FRAME_t`` rows.
 
@@ -84,7 +87,15 @@ def symbolic_frame_reconstruction_loss(
         valid_frame = ~frame_padding_mask.bool()
 
     def binary(name: str, target: Tensor, mask: Optional[Tensor] = None) -> Tensor:
-        loss = F.binary_cross_entropy_with_logits(predictions[name], target, reduction="none")
+        pos_weight = None if binary_pos_weights is None else binary_pos_weights.get(name)
+        if pos_weight is not None:
+            pos_weight = pos_weight.to(device=predictions[name].device, dtype=predictions[name].dtype)
+        loss = F.binary_cross_entropy_with_logits(
+            predictions[name],
+            target,
+            reduction="none",
+            pos_weight=pos_weight,
+        )
         active = valid_frame
         while active.ndim < loss.ndim:
             active = active.unsqueeze(-1)
@@ -96,6 +107,9 @@ def symbolic_frame_reconstruction_loss(
 
     def categorical(name: str, target: Tensor) -> Tensor:
         logits = predictions[name]
+        if categorical_class_counts is not None and name in categorical_class_counts:
+            counts = categorical_class_counts[name].to(device=logits.device, dtype=logits.dtype)
+            logits = logits + balanced_softmax_tau * counts.clamp_min(1.0).log()
         loss = F.cross_entropy(
             logits.reshape(-1, logits.size(-1)),
             target.reshape(-1),
@@ -125,12 +139,22 @@ def symbolic_frame_reconstruction_loss(
 class SymbolicTeacherLoss(nn.Module):
     """Loss used in the short, separate symbolic-teacher pretraining stage."""
 
-    def __init__(self, reconstruction_weight: float = 1.0, rvq_weight: float = 1.0) -> None:
+    def __init__(
+        self,
+        reconstruction_weight: float = 1.0,
+        rvq_weight: float = 1.0,
+        binary_pos_weights: Optional[dict[str, Tensor]] = None,
+        categorical_class_counts: Optional[dict[str, Tensor]] = None,
+        balanced_softmax_tau: float = 0.0,
+    ) -> None:
         super().__init__()
-        if reconstruction_weight < 0 or rvq_weight < 0:
+        if reconstruction_weight < 0 or rvq_weight < 0 or balanced_softmax_tau < 0:
             raise ValueError("symbolic teacher loss weights must be non-negative.")
         self.reconstruction_weight = reconstruction_weight
         self.rvq_weight = rvq_weight
+        self.binary_pos_weights = binary_pos_weights
+        self.categorical_class_counts = categorical_class_counts
+        self.balanced_softmax_tau = balanced_softmax_tau
 
     def forward(
         self,
@@ -144,6 +168,9 @@ class SymbolicTeacherLoss(nn.Module):
             output.reconstruction,
             targets,
             frame_padding_mask=frame_padding_mask,
+            binary_pos_weights=self.binary_pos_weights,
+            categorical_class_counts=self.categorical_class_counts,
+            balanced_softmax_tau=self.balanced_softmax_tau,
         )
         result["loss_reconstruction"] = result.pop("loss_total")
         result["loss_rvq"] = output.rvq_loss
