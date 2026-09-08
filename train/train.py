@@ -22,6 +22,10 @@ ABLATION_MODES = ("mel_rvq", "symbolic_teacher", "contrastive")
 DEFAULT_ABLATION = "contrastive"
 
 
+def _loss_metric_name(name: str) -> str:
+    return "loss" if name == "loss_total" else name.removeprefix("loss_")
+
+
 def compile_audio_encoder(model: TsumugiMRLPretrainingModel) -> None:
     """Compile only the Transformer inside MaskedAudioEncoder."""
 
@@ -77,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Compile only MaskedAudioEncoder.encoder with torch.compile(mode='default').",
     )
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging.")
+    parser.add_argument("--wandb-project", default="tsumugi-mrl-pretraining")
+    parser.add_argument("--wandb-name", default=None)
+    parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-interval", type=int, default=10)
     return parser
@@ -322,6 +330,42 @@ def train(args: argparse.Namespace) -> None:
 
     # Prepare the checkpoint directory and report the data-loading setup.
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    wandb_run = None
+    if args.wandb:
+        try:
+            import wandb
+        except ImportError as exc:
+            raise RuntimeError(
+                "W&B logging requires the optional 'wandb' package. Install it with: uv sync --extra train"
+            ) from exc
+
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_name,
+            config={
+                **asdict(model.config),
+                "manifest": str(args.manifest),
+                "mel_checkpoint": str(args.mel_checkpoint) if args.mel_checkpoint else None,
+                "symbolic_checkpoint": str(args.symbolic_checkpoint) if args.symbolic_checkpoint else None,
+                "ablation": ablation,
+                "pairs": len(dataset),
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "crop_frames": args.crop_frames,
+                "mask_ratio": args.mask_ratio,
+                "mask_span": args.mask_span,
+                "learning_rate": args.lr,
+                "grad_clip": args.grad_clip,
+                "num_workers": args.num_workers,
+                "device": str(device),
+                "amp": use_amp,
+                "amp_dtype": str(amp_dtype),
+                "compile_encoder": args.compile_encoder,
+                "seed": args.seed,
+            },
+        )
+
     print(
         f"pairs={len(dataset)} batches={len(loader)} device={device} "
         f"amp={use_amp} amp_dtype={amp_dtype} compile_encoder={args.compile_encoder} "
@@ -330,89 +374,110 @@ def train(args: argparse.Namespace) -> None:
     )
 
     # Train one epoch at a time so every completed epoch can be resumed.
-    for epoch in range(start_epoch + 1, args.epochs + 1):
-        model.train()
-        totals = {}
-        for batch in loader:
-            # Move the complete collated batch to the model's device.
-            batch = {key: value.to(device, non_blocking=device.type == "cuda") for key, value in batch.items()}
+    try:
+        for epoch in range(start_epoch + 1, args.epochs + 1):
+            model.train()
+            totals = {}
+            for batch in loader:
+                # Move the complete collated batch to the model's device.
+                batch = {key: value.to(device, non_blocking=device.type == "cuda") for key, value in batch.items()}
 
-            # Compute the masked objectives and update trainable parameters.
-            optimizer.zero_grad(set_to_none=True)
-            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
-                losses = pretraining_losses(
-                    model,
-                    mel,
-                    batch,
-                    criterion,
-                    args.mask_ratio,
-                    args.mask_span,
-                    ablation=ablation,
+                # Compute the masked objectives and update trainable parameters.
+                optimizer.zero_grad(set_to_none=True)
+                with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                    losses = pretraining_losses(
+                        model,
+                        mel,
+                        batch,
+                        criterion,
+                        args.mask_ratio,
+                        args.mask_span,
+                        ablation=ablation,
+                    )
+                if not torch.isfinite(losses["loss_total"]):
+                    raise RuntimeError(f"Non-finite loss at step {step + 1}.")
+                if scaler.is_enabled():
+                    scaler.scale(losses["loss_total"]).backward()
+                else:
+                    losses["loss_total"].backward()
+
+                if scaler.is_enabled():
+                    scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+
+                if scaler.is_enabled():
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                step += 1
+
+                # Accumulate epoch metrics and print periodic progress.
+                loss_values = dict(zip(losses, torch.stack(tuple(losses.values())).detach().cpu().tolist()))
+                for name, value in loss_values.items():
+                    totals[name] = totals.get(name, 0.0) + value
+                if step % args.log_interval == 0:
+                    print(
+                        f"epoch={epoch} step={step} " + " ".join(f"{k}={v:.4f}" for k, v in loss_values.items()),
+                        flush=True,
+                    )
+                    if wandb_run is not None:
+                        wandb_run.log(
+                            {
+                                **{f"train/{_loss_metric_name(name)}": value for name, value in loss_values.items()},
+                                "train/learning_rate": optimizer.param_groups[0]["lr"],
+                                "epoch": epoch,
+                            },
+                            step=step,
+                        )
+
+            # Average metrics and save all state needed for an exact resume.
+            averages = {key: value / len(loader) for key, value in totals.items()}
+            checkpoint = {
+                "config": asdict(model.config),
+                "state_dict": model.state_dict(),
+                "mel_config": asdict(mel.config),
+                "mel_state_dict": mel.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "amp_scaler": scaler.state_dict(),
+                "epoch": epoch,
+                "step": step,
+                "losses": averages,
+                "rng_state": torch.get_rng_state(),
+                "cuda_rng_state": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
+                "training_settings": {
+                    name: getattr(args, name)
+                    for name in (
+                        "batch_size",
+                        "crop_frames",
+                        "mask_ratio",
+                        "mask_span",
+                        "lr",
+                        "grad_clip",
+                        "num_workers",
+                        "ablation",
+                        "amp_dtype",
+                        "compile_encoder",
+                    )
+                },
+            }
+            torch.save(checkpoint, args.output_dir / f"epoch_{epoch:04d}.pt")
+            torch.save(checkpoint, args.output_dir / "last.pt")
+            print(f"epoch={epoch} " + " ".join(f"{k}={v:.4f}" for k, v in averages.items()), flush=True)
+            if wandb_run is not None:
+                wandb_run.log(
+                    {
+                        **{f"epoch/{_loss_metric_name(name)}": value for name, value in averages.items()},
+                        "epoch": epoch,
+                    },
+                    step=step,
                 )
-            if not torch.isfinite(losses["loss_total"]):
-                raise RuntimeError(f"Non-finite loss at step {step + 1}.")
-            if scaler.is_enabled():
-                scaler.scale(losses["loss_total"]).backward()
-            else:
-                losses["loss_total"].backward()
 
-            if scaler.is_enabled():
-                scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-
-            if scaler.is_enabled():
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                optimizer.step()
-            step += 1
-
-            # Accumulate epoch metrics and print periodic progress.
-            loss_values = dict(zip(losses, torch.stack(tuple(losses.values())).detach().cpu().tolist()))
-            for name, value in loss_values.items():
-                totals[name] = totals.get(name, 0.0) + value
-            if step % args.log_interval == 0:
-                print(
-                    f"epoch={epoch} step={step} " + " ".join(f"{k}={v:.4f}" for k, v in loss_values.items()),
-                    flush=True,
-                )
-
-        # Average metrics and save all state needed for an exact resume.
-        averages = {key: value / len(loader) for key, value in totals.items()}
-        checkpoint = {
-            "config": asdict(model.config),
-            "state_dict": model.state_dict(),
-            "mel_config": asdict(mel.config),
-            "mel_state_dict": mel.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "amp_scaler": scaler.state_dict(),
-            "epoch": epoch,
-            "step": step,
-            "losses": averages,
-            "rng_state": torch.get_rng_state(),
-            "cuda_rng_state": torch.cuda.get_rng_state_all() if device.type == "cuda" else None,
-            "training_settings": {
-                name: getattr(args, name)
-                for name in (
-                    "batch_size",
-                    "crop_frames",
-                    "mask_ratio",
-                    "mask_span",
-                    "lr",
-                    "grad_clip",
-                    "num_workers",
-                    "ablation",
-                    "amp_dtype",
-                    "compile_encoder",
-                )
-            },
-        }
-        torch.save(checkpoint, args.output_dir / f"epoch_{epoch:04d}.pt")
-        torch.save(checkpoint, args.output_dir / "last.pt")
-        print(f"epoch={epoch} " + " ".join(f"{k}={v:.4f}" for k, v in averages.items()), flush=True)
-
-    # Export the student without teacher and pretraining-only heads.
-    model.export_audio_model().save_pretrained(args.output_dir / "audio_model")
+        # Export the student without teacher and pretraining-only heads.
+        model.export_audio_model().save_pretrained(args.output_dir / "audio_model")
+    finally:
+        if wandb_run is not None:
+            wandb_run.finish()
 
 
 if __name__ == "__main__":

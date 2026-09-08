@@ -63,6 +63,25 @@ def training_files(tmp_path):
     return config, manifest, mel_path, symbolic_path
 
 
+def test_pretraining_parser_accepts_wandb_options():
+    args = build_parser().parse_args(
+        [
+            "--wandb",
+            "--wandb-project",
+            "project",
+            "--wandb-name",
+            "run",
+            "--wandb-entity",
+            "entity",
+        ]
+    )
+
+    assert args.wandb is True
+    assert args.wandb_project == "project"
+    assert args.wandb_name == "run"
+    assert args.wandb_entity == "entity"
+
+
 def test_padded_batch_updates_student_and_projection_only(training_files):
     config, manifest, mel_path, symbolic_path = training_files
     dataset = PairedAudioDataset(manifest, config, crop_frames=20)

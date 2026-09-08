@@ -103,6 +103,8 @@ continue on the same dataset.
 
 On CUDA, `--amp-dtype auto` is enabled by default. Add `--compile-encoder` to
 compile only `MaskedAudioEncoder.encoder` with `torch.compile(mode="default")`.
+Add `--wandb` to log training and epoch losses; set the project, run name, and
+entity with `--wandb-project`, `--wandb-name`, and `--wandb-entity`.
 
 For a new run, `--config path/to/audio_config.json` overrides audio encoder
 settings: `d_model`, `n_heads`, `num_layers`, `dim_feedforward`, `dropout`, and
