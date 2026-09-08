@@ -22,6 +22,15 @@ ABLATION_MODES = ("mel_rvq", "symbolic_teacher", "contrastive")
 DEFAULT_ABLATION = "contrastive"
 
 
+def compile_audio_encoder(model: TsumugiMRLPretrainingModel) -> None:
+    """Compile only the Transformer inside MaskedAudioEncoder."""
+
+    model.audio_encoder.encoder.forward = torch.compile(
+        model.audio_encoder.encoder.forward,
+        mode="default",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
 
@@ -57,6 +66,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", default=None)
+    parser.add_argument(
+        "--amp-dtype",
+        choices=("auto", "float16", "bfloat16"),
+        default="auto",
+        help="CUDA AMP dtype; auto prefers bfloat16 when supported.",
+    )
+    parser.add_argument(
+        "--compile-encoder",
+        action="store_true",
+        help="Compile only MaskedAudioEncoder.encoder with torch.compile(mode='default').",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-interval", type=int, default=10)
     return parser
@@ -69,8 +89,10 @@ def make_span_mask(padding_mask: Tensor, ratio: float, span: int) -> Tensor:
 
     # Build a separate mask for each example without touching padded tokens.
     mask = torch.zeros_like(padding_mask)
-    for row in range(mask.size(0)):
-        length = int((~padding_mask[row]).sum().item())
+    # One host transfer is enough; doing .item() once per row synchronizes a
+    # CUDA stream repeatedly before the actual encoder work starts.
+    lengths = (~padding_mask).sum(dim=1).tolist()
+    for row, length in enumerate(lengths):
         target = max(1, round(length * ratio))
 
         # Shuffle non-overlapping spans and trim the last one to the budget.
@@ -137,19 +159,29 @@ def _ablation_flags(ablation: str) -> tuple[bool, bool]:
     return ablation != "mel_rvq", ablation == "contrastive"
 
 
-def pretraining_losses(model, mel_teacher, batch, criterion, mask_ratio, mask_span, ablation=DEFAULT_ABLATION):
+def pretraining_losses(
+    model,
+    mel_teacher,
+    batch,
+    criterion,
+    mask_ratio,
+    mask_span,
+    ablation=DEFAULT_ABLATION,
+):
     use_musical, use_contrastive = _ablation_flags(ablation)
     # Mask only valid audio frames; padding remains excluded from the target.
     audio_mask = make_span_mask(batch["audio_padding_mask"], mask_ratio, mask_span)
 
-    # The acoustic teacher sees the original, unmasked audio.
+    # The acoustic teacher and student share this normalized Mel frontend.
     with torch.no_grad():
-        acoustic_targets = mel_teacher.encode(batch["audio"])
+        mel_features = mel_teacher.frontend(batch["audio"])
+        acoustic_targets = mel_teacher.encode_features(mel_features)
 
     model_inputs = {
         "audio": batch["audio"],
         "audio_mask": audio_mask,
         "audio_padding_mask": batch["audio_padding_mask"],
+        "audio_mel": mel_features,
     }
     if use_musical:
         # Keep the symbolic encoder/RVQ fixed while using its frame codes as
@@ -219,7 +251,8 @@ def train(args: argparse.Namespace) -> None:
         mel = MelRVQTokenizer(MelRVQConfig(**restored["mel_config"]))
         mel.load_state_dict(restored["mel_state_dict"])
         for name, value in restored["training_settings"].items():
-            setattr(args, name, value)
+            if hasattr(args, name):
+                setattr(args, name, value)
     else:
         ablation = requested_ablation or DEFAULT_ABLATION
         use_musical, _ = _ablation_flags(ablation)
@@ -241,6 +274,22 @@ def train(args: argparse.Namespace) -> None:
     model.to(device)
     mel.to(device).eval().requires_grad_(False)
     model.symbolic_teacher.freeze(train_projection=ablation == "contrastive")
+    if args.compile_encoder:
+        compile_audio_encoder(model)
+
+    use_amp = device.type == "cuda"
+    amp_dtype = torch.float32
+    if use_amp:
+        if args.amp_dtype == "auto":
+            amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported(including_emulation=False) else torch.float16
+        elif args.amp_dtype == "bfloat16":
+            amp_dtype = torch.bfloat16
+        else:
+            amp_dtype = torch.float16
+    use_grad_scaler = use_amp and amp_dtype == torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=use_grad_scaler)
+    if restored and restored.get("amp_scaler") is not None:
+        scaler.load_state_dict(restored["amp_scaler"])
 
     # Create the optimizer, loss function, and paired audio/MIDI data loader.
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=args.lr)
@@ -248,14 +297,17 @@ def train(args: argparse.Namespace) -> None:
     dataset = PairedAudioDataset(args.manifest, model.config, args.crop_frames)
     if len(dataset) < args.batch_size:
         raise ValueError("Not enough successful pairs for one full batch; lower --batch-size (minimum 2).")
-    loader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        drop_last=True,
-        num_workers=args.num_workers,
-        collate_fn=collate_pretraining_windows,
-    )
+    loader_options = {
+        "batch_size": args.batch_size,
+        "shuffle": True,
+        "drop_last": True,
+        "num_workers": args.num_workers,
+        "collate_fn": collate_pretraining_windows,
+        "pin_memory": device.type == "cuda",
+    }
+    if args.num_workers > 0:
+        loader_options.update(persistent_workers=True, prefetch_factor=2)
+    loader = DataLoader(dataset, **loader_options)
 
     # Restore optimizer and random state after rebuilding the training objects.
     start_epoch, step = 0, 0
@@ -270,41 +322,58 @@ def train(args: argparse.Namespace) -> None:
 
     # Prepare the checkpoint directory and report the data-loading setup.
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"pairs={len(dataset)} batches={len(loader)} device={device}", flush=True)
+    print(
+        f"pairs={len(dataset)} batches={len(loader)} device={device} "
+        f"amp={use_amp} amp_dtype={amp_dtype} compile_encoder={args.compile_encoder} "
+        f"num_workers={args.num_workers}",
+        flush=True,
+    )
 
     # Train one epoch at a time so every completed epoch can be resumed.
     for epoch in range(start_epoch + 1, args.epochs + 1):
         model.train()
         totals = {}
-
         for batch in loader:
             # Move the complete collated batch to the model's device.
-            batch = {key: value.to(device) for key, value in batch.items()}
+            batch = {key: value.to(device, non_blocking=device.type == "cuda") for key, value in batch.items()}
 
             # Compute the masked objectives and update trainable parameters.
             optimizer.zero_grad(set_to_none=True)
-            losses = pretraining_losses(
-                model,
-                mel,
-                batch,
-                criterion,
-                args.mask_ratio,
-                args.mask_span,
-                ablation=ablation,
-            )
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                losses = pretraining_losses(
+                    model,
+                    mel,
+                    batch,
+                    criterion,
+                    args.mask_ratio,
+                    args.mask_span,
+                    ablation=ablation,
+                )
             if not torch.isfinite(losses["loss_total"]):
                 raise RuntimeError(f"Non-finite loss at step {step + 1}.")
-            losses["loss_total"].backward()
+            if scaler.is_enabled():
+                scaler.scale(losses["loss_total"]).backward()
+            else:
+                losses["loss_total"].backward()
+
+            if scaler.is_enabled():
+                scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            optimizer.step()
+
+            if scaler.is_enabled():
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             step += 1
 
             # Accumulate epoch metrics and print periodic progress.
-            for name, value in losses.items():
-                totals[name] = totals.get(name, 0.0) + value.detach().item()
+            loss_values = dict(zip(losses, torch.stack(tuple(losses.values())).detach().cpu().tolist()))
+            for name, value in loss_values.items():
+                totals[name] = totals.get(name, 0.0) + value
             if step % args.log_interval == 0:
                 print(
-                    f"epoch={epoch} step={step} " + " ".join(f"{k}={v.detach().item():.4f}" for k, v in losses.items()),
+                    f"epoch={epoch} step={step} " + " ".join(f"{k}={v:.4f}" for k, v in loss_values.items()),
                     flush=True,
                 )
 
@@ -316,6 +385,7 @@ def train(args: argparse.Namespace) -> None:
             "mel_config": asdict(mel.config),
             "mel_state_dict": mel.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "amp_scaler": scaler.state_dict(),
             "epoch": epoch,
             "step": step,
             "losses": averages,
@@ -332,6 +402,8 @@ def train(args: argparse.Namespace) -> None:
                     "grad_clip",
                     "num_workers",
                     "ablation",
+                    "amp_dtype",
+                    "compile_encoder",
                 )
             },
         }

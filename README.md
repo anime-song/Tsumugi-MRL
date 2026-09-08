@@ -64,7 +64,7 @@ Train with the preparation manifest and both teacher checkpoints. The default
 uv run --extra train python -m train.train `
   --manifest datasets/symbolic/manifest.json `
   --mel-checkpoint checkpoints/mel_rvq/last.pt `
-  --symbolic-checkpoint checkpoints/symbolic_teacher/last.pt `
+  --symbolic-checkpoint checkpoints/symbolic_teacher_weighted/last.pt `
   --output-dir checkpoints/pretraining `
   --batch-size 4 --epochs 10 --ablation contrastive
 ```
@@ -98,7 +98,11 @@ uv run --extra train python -m train.train `
 `--epochs` is the total epoch count. Resume restores both teachers, model
 settings, optimizer, random state, and training settings (including the
 ablation mode, batch size, cropping, masking, learning rate, gradient clipping,
-and worker count). Use the same manifest to continue on the same dataset.
+worker count, AMP dtype, and encoder compile setting). Use the same manifest to
+continue on the same dataset.
+
+On CUDA, `--amp-dtype auto` is enabled by default. Add `--compile-encoder` to
+compile only `MaskedAudioEncoder.encoder` with `torch.compile(mode="default")`.
 
 For a new run, `--config path/to/audio_config.json` overrides audio encoder
 settings: `d_model`, `n_heads`, `num_layers`, `dim_feedforward`, `dropout`, and

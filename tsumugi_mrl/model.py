@@ -141,9 +141,12 @@ class MaskedAudioEncoder(nn.Module):
         audio: Tensor,
         mask: Optional[Tensor] = None,
         padding_mask: Optional[Tensor] = None,
+        mel_features: Optional[Tensor] = None,
     ) -> Tensor:
         # [B, C, S] -> [B, T_a, D_mel] -> [B, T_a, D_a].
-        x = self.frontend(audio)
+        # Pretraining can pass the Mel features already computed for the
+        # acoustic teacher so the expensive STFT is not repeated.
+        x = self.frontend(audio) if mel_features is None else mel_features
         x = self.input_projection(x)
 
         if mask is not None:

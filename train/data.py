@@ -1,7 +1,7 @@
 """Shared audio/MIDI windows for masked-audio pretraining."""
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import soundfile as sf
@@ -13,7 +13,10 @@ from torch.utils.data import Dataset
 
 from .config import TrainingConfig
 from .symbolic import (
-    SymbolicSequence, collate_symbolic_sequences, crop_symbolic_sequence, load_symbolic_cache,
+    SymbolicSequence,
+    collate_symbolic_sequences,
+    crop_symbolic_sequence,
+    load_symbolic_cache,
 )
 
 
@@ -99,17 +102,39 @@ class PairedAudioDataset(Dataset[PretrainingWindow]):
 
     def __getitem__(self, index: int) -> PretrainingWindow:
         audio_path, token_path = self.pairs[index]
-        samples, rate = sf.read(audio_path, dtype="float32", always_2d=True)
-        audio = torch.from_numpy(samples.T.copy())
-        if rate != self.config.sample_rate:
-            audio = torchaudio.functional.resample(audio, rate, self.config.sample_rate)
-        audio = audio.repeat(2, 1) if audio.size(0) == 1 else audio[:2]
         sequence = load_symbolic_cache(token_path)
-        available = min(sequence.num_frames, audio.size(-1) // (
-            self.config.hop_length * self.config.temporal_fold
-        ))
-        start = int(torch.randint(max(1, available - self.crop_frames + 1), ()).item())
-        return crop_pretraining_window(audio, sequence, start, self.crop_frames, self.config)
+        samples_per_frame = self.config.hop_length * self.config.temporal_fold
+        info = sf.info(audio_path)
+        if info.samplerate == self.config.sample_rate:
+            # Read only the random crop instead of decoding the complete song.
+            # This is important for the long audio files in the preparation
+            # manifest; resampled inputs use the safe full-read fallback below.
+            available = min(sequence.num_frames, info.frames // samples_per_frame)
+            window_start = int(torch.randint(max(1, available - self.crop_frames + 1), ()).item())
+            start_sample = window_start * samples_per_frame
+            sample_count = self.crop_frames * samples_per_frame
+            with sf.SoundFile(audio_path) as sound_file:
+                sound_file.seek(start_sample)
+                samples = sound_file.read(sample_count, dtype="float32", always_2d=True)
+            audio = torch.from_numpy(samples.T.copy())
+            sequence = crop_symbolic_sequence(
+                sequence,
+                window_start,
+                self.crop_frames,
+                frame_rate=self.config.symbolic_frame_rate,
+            )
+            window_start = 0
+        else:
+            samples, rate = sf.read(audio_path, dtype="float32", always_2d=True)
+            audio = torch.from_numpy(samples.T.copy())
+            audio = torchaudio.functional.resample(audio, rate, self.config.sample_rate)
+            available = min(sequence.num_frames, audio.size(-1) // samples_per_frame)
+            window_start = int(torch.randint(max(1, available - self.crop_frames + 1), ()).item())
+            # Keep the full resampled waveform; crop_pretraining_window applies
+            # window_start to both the waveform and symbolic sequence below.
+
+        audio = audio.repeat(2, 1) if audio.size(0) == 1 else audio[:2]
+        return crop_pretraining_window(audio, sequence, window_start, self.crop_frames, self.config)
 
 
 def collate_pretraining_windows(windows: list[PretrainingWindow]) -> dict[str, Tensor]:

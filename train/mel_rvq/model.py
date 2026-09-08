@@ -92,7 +92,13 @@ class MelRVQTokenizer(nn.Module, PyTorchModelHubMixin):
     def encode(self, audio: Tensor) -> Tensor:
         """Create fixed acoustic targets with shape ``[B, T, N]``."""
 
-        return self.rvq.encode(self.encoder(self.frontend(audio)))
+        return self.encode_features(self.frontend(audio))
+
+    @torch.no_grad()
+    def encode_features(self, mel_features: Tensor) -> Tensor:
+        """Create fixed acoustic targets from normalized folded Mel features."""
+
+        return self.rvq.encode(self.encoder(mel_features))
 
     def decode(self, codes: Tensor) -> Tensor:
         """Decode ``[B, T_a, N_acoustic]`` codes to ``[B, T_a, D_mel]``."""

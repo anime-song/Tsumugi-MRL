@@ -91,10 +91,16 @@ class TsumugiMRLPretrainingModel(nn.Module, PyTorchModelHubMixin):
         audio: Tensor,
         mask: Optional[Tensor] = None,
         padding_mask: Optional[Tensor] = None,
+        mel_features: Optional[Tensor] = None,
     ) -> Tensor:
         """Return audio hidden states with shape ``[B, T_a, D_a]``."""
 
-        return self.audio_encoder(audio, mask=mask, padding_mask=padding_mask)
+        return self.audio_encoder(
+            audio,
+            mask=mask,
+            padding_mask=padding_mask,
+            mel_features=mel_features,
+        )
 
     @staticmethod
     def mean_pool(hidden: Tensor, padding_mask: Optional[Tensor] = None) -> Tensor:
@@ -145,10 +151,16 @@ class TsumugiMRLPretrainingModel(nn.Module, PyTorchModelHubMixin):
         symbolic_position_ids: Optional[Tensor] = None,
         symbolic_anchor_positions: Optional[Tensor] = None,
         symbolic_frame_padding_mask: Optional[Tensor] = None,
+        audio_mel: Optional[Tensor] = None,
     ) -> TsumugiMRLOutput:
         # 1) Shared masked audio encoder.
         # [B, C, S] -> frontend [B, T_a, D_mel] -> hidden [B, T_a, D_a].
-        hidden = self.encode_audio(audio, mask=audio_mask, padding_mask=audio_padding_mask)
+        hidden = self.encode_audio(
+            audio,
+            mask=audio_mask,
+            padding_mask=audio_padding_mask,
+            mel_features=audio_mel,
+        )
 
         # 2) Two frame-wise SSL classifiers read the same audio hidden states.
         # Acoustic targets and musical targets both live on the audio 25 Hz
