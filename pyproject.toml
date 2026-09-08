@@ -12,6 +12,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+probe = [
+    "numpy>=1.26,<3",
+    "soundfile>=0.13",
+]
 train = [
     "dlchordx>=1.0.5",
     "mido>=1.3.3",

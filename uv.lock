@@ -1613,6 +1613,12 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+probe = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "soundfile" },
+]
 train = [
     { name = "dlchordx" },
     { name = "mido" },
@@ -1634,8 +1640,10 @@ requires-dist = [
     { name = "einops", specifier = ">=0.8" },
     { name = "huggingface-hub", specifier = ">=0.25" },
     { name = "mido", marker = "extra == 'train'", specifier = ">=1.3.3" },
+    { name = "numpy", marker = "extra == 'probe'", specifier = ">=1.26,<3" },
     { name = "numpy", marker = "extra == 'train'", specifier = ">=1.26,<3" },
     { name = "safetensors", specifier = ">=0.4.3" },
+    { name = "soundfile", marker = "extra == 'probe'", specifier = ">=0.13" },
     { name = "soundfile", marker = "extra == 'train'", specifier = ">=0.13" },
     { name = "torch", marker = "sys_platform != 'linux' and sys_platform != 'win32'", specifier = "==2.13.0" },
     { name = "torch", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = "==2.13.0", index = "https://download.pytorch.org/whl/cu130" },
@@ -1643,7 +1651,7 @@ requires-dist = [
     { name = "torchaudio", marker = "sys_platform == 'linux' or sys_platform == 'win32'", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "wandb", marker = "extra == 'train'", specifier = ">=0.29" },
 ]
-provides-extras = ["train"]
+provides-extras = ["probe", "train"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8" }]

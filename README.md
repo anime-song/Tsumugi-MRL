@@ -166,3 +166,90 @@ at the cost of additional computation during backpropagation.
 ```powershell
 uv run --extra train python -m pytest -q tests
 ```
+
+## Linear probe results
+
+Test-set F1 from frozen audio representations. The random row uses the
+random-initialized encoder; the remaining rows will be filled after evaluation.
+Values are macro-F1 except for Ballroom, which uses binary F1.
+
+<table>
+<thead>
+<tr>
+<th rowspan="3">Pretraining</th>
+<th><strong>NSynth</strong></th>
+<th>NSynth</th>
+<th><strong>GuitarSet</strong></th>
+<th>FMA-small</th>
+<th>OpenMIC</th>
+<th><strong>Ballroom</strong></th>
+<th><strong>GiantSteps</strong></th>
+</tr>
+<tr>
+<th><strong>Pitch</strong></th>
+<th>Instrument family</th>
+<th><strong>Chord</strong></th>
+<th>Genre</th>
+<th>Instrument</th>
+<th><strong>Beat</strong></th>
+<th><strong>Key</strong></th>
+</tr>
+<tr>
+<th>F1</th>
+<th>F1</th>
+<th>F1</th>
+<th>F1</th>
+<th>F1</th>
+<th>F1</th>
+<th>F1</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Random</td>
+<td><strong>68.22%</strong></td>
+<td>43.19%</td>
+<td><strong>15.53%</strong></td>
+<td>17.65%</td>
+<td>25.45%</td>
+<td><strong>49.33%</strong></td>
+<td><strong>27.35%</strong></td>
+</tr>
+<tr>
+<td>+ Mel RVQ</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>+ Symbolic Teacher</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>+ Contrastive</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+
+Bold columns are the core musical-structure probes: pitch, chord, beat, and
+key.
+
+Detailed probe commands and settings are documented in
+[probes/README.md](probes/README.md).
