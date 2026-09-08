@@ -31,6 +31,21 @@ For Weights & Biases logging, run `uv run --extra train wandb login` and add
 `--wandb` to the training command. Set `--wandb-project` and `--wandb-name` to
 choose the project and run name.
 
+## Published checkpoint
+
+The released Mel-RVQ tokenizer is available from the
+[Hugging Face Hub](https://huggingface.co/anime-song/tsumugi-mrl-mel-rvq):
+
+```python
+from train.mel_rvq.model import MelRVQTokenizer
+
+teacher = MelRVQTokenizer.from_pretrained("anime-song/tsumugi-mrl-mel-rvq")
+```
+
+The Hub checkpoint uses eight codebooks with 1,024 entries each and includes
+the Mel normalization statistics used during training. It produces fixed
+acoustic targets for Tsumugi-MRL pretraining; it does not synthesize audio.
+
 ## Use the tokenizer
 
 Pass unmasked stereo audio at 22,050 Hz as `[batch, 2, samples]`:
@@ -44,6 +59,9 @@ with torch.no_grad():
     acoustic_targets = teacher.encode(unmasked_audio)
 # acoustic_targets: [batch, time, codebooks]
 ```
+
+Use `from_checkpoint` for local training `.pt` files and `from_pretrained` for
+the Hub release.
 
 Before audio pretraining, copy the teacher's normalization statistics to the
 audio model:
