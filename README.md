@@ -193,29 +193,30 @@ uv run --extra train python -m pytest -q tests
 Test-set F1 from frozen audio representations. The random row uses the
 random-initialized encoder, and the Mel RVQ row uses the 625-epoch acoustic
 pretraining run; the remaining rows will be filled after evaluation. Values are
-macro-F1 except for Ballroom, which uses binary F1. See
-[linear probes](probes/README.md) for the probe settings and accuracy figures.
+macro-F1 except for Ballroom, which uses binary F1, and the best value in each
+column is bold. See [linear probes](probes/README.md) for the probe settings
+and accuracy figures.
 
 <table>
 <thead>
 <tr>
 <th rowspan="3">Pretraining</th>
-<th><strong>NSynth</strong></th>
 <th>NSynth</th>
-<th><strong>GuitarSet</strong></th>
+<th>NSynth</th>
+<th>GuitarSet</th>
 <th>FMA-small</th>
 <th>OpenMIC</th>
-<th><strong>Ballroom</strong></th>
-<th><strong>GiantSteps</strong></th>
+<th>Ballroom</th>
+<th>GiantSteps</th>
 </tr>
 <tr>
-<th><strong>Pitch</strong></th>
+<th>Pitch</th>
 <th>Instrument family</th>
-<th><strong>Chord</strong></th>
+<th>Chord</th>
 <th>Genre</th>
 <th>Instrument</th>
-<th><strong>Beat</strong></th>
-<th><strong>Key</strong></th>
+<th>Beat</th>
+<th>Key</th>
 </tr>
 <tr>
 <th>F1</th>
@@ -230,23 +231,23 @@ macro-F1 except for Ballroom, which uses binary F1. See
 <tbody>
 <tr>
 <td>Random</td>
-<td><strong>68.22%</strong></td>
+<td>68.22%</td>
 <td>43.19%</td>
-<td><strong>15.53%</strong></td>
+<td>15.53%</td>
 <td>17.65%</td>
 <td>25.45%</td>
-<td><strong>49.33%</strong></td>
+<td>49.33%</td>
 <td><strong>27.35%</strong></td>
 </tr>
 <tr>
 <td>+ Mel RVQ</td>
 <td><strong>71.99%</strong></td>
-<td>61.92%</td>
+<td><strong>61.92%</strong></td>
 <td><strong>31.50%</strong></td>
-<td>22.40%</td>
-<td>41.25%</td>
+<td><strong>22.40%</strong></td>
+<td><strong>41.25%</strong></td>
 <td><strong>78.87%</strong></td>
-<td><strong>23.37%</strong></td>
+<td>23.37%</td>
 </tr>
 <tr>
 <td>+ Symbolic Teacher</td>
