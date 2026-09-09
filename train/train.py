@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Run length and output location.
     parser.add_argument("--output-dir", type=Path, default=Path("checkpoints/pretraining"))
-    parser.add_argument("--epochs", type=int, default=10, help="Total number of epochs, including completed epochs.")
+    parser.add_argument("--epochs", type=int, default=800, help="Total number of epochs, including completed epochs.")
 
     # Batch construction and masking.
     parser.add_argument("--batch-size", type=int, default=16)
@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--save-interval",
         type=int,
-        default=1,
+        default=10,
         help="Keep epoch_XXXX.pt every N epochs; last.pt is always written.",
     )
     parser.add_argument("--device", default=None)
