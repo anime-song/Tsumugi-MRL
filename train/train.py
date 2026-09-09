@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=10, help="Total number of epochs, including completed epochs.")
 
     # Batch construction and masking.
-    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--crop-frames", type=int, default=750)
     parser.add_argument("--mask-ratio", type=float, default=0.5)
     parser.add_argument("--mask-span", type=int, default=10)
@@ -68,7 +68,19 @@ def build_parser() -> argparse.ArgumentParser:
     # Optimization and runtime settings.
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--grad-clip", type=float, default=1.0)
-    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help="DataLoader workers; use 4-8 when the CPU/SSD can keep the GPU fed.",
+    )
+    parser.add_argument("--prefetch-factor", type=int, default=2)
+    parser.add_argument(
+        "--save-interval",
+        type=int,
+        default=1,
+        help="Keep epoch_XXXX.pt every N epochs; last.pt is always written.",
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument(
         "--amp-dtype",
@@ -181,12 +193,16 @@ def pretraining_losses(
     audio_mask = make_span_mask(batch["audio_padding_mask"], mask_ratio, mask_span)
 
     # The acoustic teacher and student share this normalized Mel frontend.
+    # A disk feature cache can provide the normalized Mel tensor directly,
+    # avoiding WAV decoding and STFT work in every training epoch.
     with torch.no_grad():
-        mel_features = mel_teacher.frontend(batch["audio"])
+        mel_features = batch.get("mel_features")
+        if mel_features is None:
+            mel_features = mel_teacher.frontend(batch["audio"])
         acoustic_targets = mel_teacher.encode_features(mel_features)
 
     model_inputs = {
-        "audio": batch["audio"],
+        "audio": batch.get("audio"),
         "audio_mask": audio_mask,
         "audio_padding_mask": batch["audio_padding_mask"],
         "audio_mel": mel_features,
@@ -235,6 +251,10 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError("epochs/crop-frames must be positive and batch-size must be at least 2.")
     if args.lr <= 0 or args.grad_clip <= 0 or args.log_interval <= 0 or args.num_workers < 0:
         raise ValueError("lr, grad-clip, and log-interval must be positive; num-workers must be non-negative.")
+    if args.prefetch_factor <= 0:
+        raise ValueError("prefetch-factor must be positive.")
+    if args.save_interval <= 0:
+        raise ValueError("save-interval must be positive.")
     if not 0 < args.mask_ratio < 1 or args.mask_span <= 0:
         raise ValueError("mask-ratio must be between 0 and 1 and mask-span must be positive.")
     if args.resume and any((args.config, args.mel_checkpoint, args.symbolic_checkpoint)):
@@ -303,6 +323,7 @@ def train(args: argparse.Namespace) -> None:
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=args.lr)
     criterion = PretrainingLoss(temperature=model.config.contrastive_temperature)
     dataset = PairedAudioDataset(args.manifest, model.config, args.crop_frames)
+    cache_mode = "mel_features" if dataset.pairs[0].mel_path is not None else "waveform"
     if len(dataset) < args.batch_size:
         raise ValueError("Not enough successful pairs for one full batch; lower --batch-size (minimum 2).")
     loader_options = {
@@ -314,7 +335,7 @@ def train(args: argparse.Namespace) -> None:
         "pin_memory": device.type == "cuda",
     }
     if args.num_workers > 0:
-        loader_options.update(persistent_workers=True, prefetch_factor=2)
+        loader_options.update(persistent_workers=True, prefetch_factor=args.prefetch_factor)
     loader = DataLoader(dataset, **loader_options)
 
     # Restore optimizer and random state after rebuilding the training objects.
@@ -350,6 +371,7 @@ def train(args: argparse.Namespace) -> None:
                 "symbolic_checkpoint": str(args.symbolic_checkpoint) if args.symbolic_checkpoint else None,
                 "ablation": ablation,
                 "pairs": len(dataset),
+                "cache_mode": cache_mode,
                 "epochs": args.epochs,
                 "batch_size": args.batch_size,
                 "crop_frames": args.crop_frames,
@@ -358,6 +380,8 @@ def train(args: argparse.Namespace) -> None:
                 "learning_rate": args.lr,
                 "grad_clip": args.grad_clip,
                 "num_workers": args.num_workers,
+                "prefetch_factor": args.prefetch_factor,
+                "save_interval": args.save_interval,
                 "device": str(device),
                 "amp": use_amp,
                 "amp_dtype": str(amp_dtype),
@@ -369,7 +393,7 @@ def train(args: argparse.Namespace) -> None:
     print(
         f"pairs={len(dataset)} batches={len(loader)} device={device} "
         f"amp={use_amp} amp_dtype={amp_dtype} compile_encoder={args.compile_encoder} "
-        f"num_workers={args.num_workers}",
+        f"num_workers={args.num_workers} prefetch_factor={args.prefetch_factor} cache={cache_mode}",
         flush=True,
     )
 
@@ -455,13 +479,17 @@ def train(args: argparse.Namespace) -> None:
                         "lr",
                         "grad_clip",
                         "num_workers",
+                        "prefetch_factor",
                         "ablation",
                         "amp_dtype",
                         "compile_encoder",
                     )
                 },
             }
-            torch.save(checkpoint, args.output_dir / f"epoch_{epoch:04d}.pt")
+            # last.pt always allows an exact resume; the numbered copies are
+            # kept on the requested interval and for the final epoch.
+            if epoch % args.save_interval == 0 or epoch == args.epochs:
+                torch.save(checkpoint, args.output_dir / f"epoch_{epoch:04d}.pt")
             torch.save(checkpoint, args.output_dir / "last.pt")
             print(f"epoch={epoch} " + " ".join(f"{k}={v:.4f}" for k, v in averages.items()), flush=True)
             if wandb_run is not None:

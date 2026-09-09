@@ -66,7 +66,7 @@ uv run --extra train python -m train.train `
   --mel-checkpoint checkpoints/mel_rvq/last.pt `
   --symbolic-checkpoint checkpoints/symbolic_teacher_weighted/last.pt `
   --output-dir checkpoints/pretraining `
-  --batch-size 4 --epochs 10 --ablation contrastive
+  --batch-size 16 --epochs 10 --num-workers 4 --ablation contrastive
 ```
 
 Use `--ablation` to select the cumulative objective set:
@@ -82,7 +82,9 @@ masking. Batches require at least two pairs; the final incomplete batch is
 dropped. Short clips are padded, and padding is excluded from attention,
 pooling, and prediction losses.
 
-Each epoch saves `last.pt` and `epoch_XXXX.pt`. After training, the exported
+Each epoch saves `last.pt` and `epoch_XXXX.pt`. Long runs can thin the numbered
+copies with `--save-interval N`, which keeps every Nth epoch and the final one
+while still refreshing `last.pt` after every epoch. After training, the exported
 audio model is saved in `checkpoints/pretraining/audio_model` and can be loaded
 with `TsumugiMRLModel.from_pretrained()`.
 
@@ -98,8 +100,21 @@ uv run --extra train python -m train.train `
 `--epochs` is the total epoch count. Resume restores both teachers, model
 settings, optimizer, random state, and training settings (including the
 ablation mode, batch size, cropping, masking, learning rate, gradient clipping,
-worker count, AMP dtype, and encoder compile setting). Use the same manifest to
-continue on the same dataset.
+worker count, prefetch factor, AMP dtype, and encoder compile setting). Use the
+same manifest to continue on the same dataset. `--save-interval` is not
+restored, so each continuation can choose its own checkpoint spacing.
+
+For repeated long runs, build the disk-backed audio and symbolic caches once:
+
+```powershell
+uv run --extra train python scripts/prepare_pretraining_cache.py `
+  --manifest datasets/symbolic/manifest.json `
+  --mel-checkpoint checkpoints/mel_rvq/last.pt
+```
+
+Then pass `datasets/symbolic/pretraining_cache/manifest.json` to
+`train.train`. The cached manifest avoids per-epoch WAV decoding, STFT, and
+loading the large symbolic-teacher target tensors.
 
 On CUDA, `--amp-dtype auto` is enabled by default. Add `--compile-encoder` to
 compile only `MaskedAudioEncoder.encoder` with `torch.compile(mode="default")`.

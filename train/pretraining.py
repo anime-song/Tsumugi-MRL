@@ -88,7 +88,7 @@ class TsumugiMRLPretrainingModel(nn.Module, PyTorchModelHubMixin):
 
     def encode_audio(
         self,
-        audio: Tensor,
+        audio: Optional[Tensor],
         mask: Optional[Tensor] = None,
         padding_mask: Optional[Tensor] = None,
         mel_features: Optional[Tensor] = None,
@@ -141,7 +141,7 @@ class TsumugiMRLPretrainingModel(nn.Module, PyTorchModelHubMixin):
 
     def forward(
         self,
-        audio: Tensor,
+        audio: Optional[Tensor],
         audio_mask: Optional[Tensor] = None,
         audio_padding_mask: Optional[Tensor] = None,
         symbolic_token_ids: Optional[Tensor] = None,

@@ -186,6 +186,7 @@ INSTRUMENT_CLASS_NAMES: tuple[str, ...] = (
 INSTRUMENT_CLASSES = len(INSTRUMENT_CLASS_NAMES)
 NO_INSTRUMENT_ID = INSTRUMENT_CLASSES
 SYMBOLIC_CACHE_VERSION = 4
+PRETRAINING_CACHE_VERSION = 1
 INSTRUMENT_NAME_TO_ID = {name: index for index, name in enumerate(INSTRUMENT_CLASS_NAMES)}
 
 # The fallback from a MIDI GM program to the reference merged taxonomy.  A
@@ -993,6 +994,73 @@ def load_symbolic_cache(path: str | Path) -> SymbolicSequence:
     )
 
 
+def save_pretraining_cache(source_path: str | Path, destination_path: str | Path) -> None:
+    """Write the small symbolic subset needed by audio pretraining.
+
+    The regular symbolic cache also stores frame-level AMT targets for
+    symbolic-teacher training.  Audio pretraining only needs the event stream,
+    note spans, and the carried state at a crop boundary.  Keeping those
+    fields in a separate compact cache avoids reading the large AMT tensors on
+    every audio batch.
+    """
+
+    sequence = load_symbolic_cache(source_path)
+    targets = sequence.frame_targets
+    payload = {
+        "pretraining_cache_version": PRETRAINING_CACHE_VERSION,
+        "token_ids": sequence.token_ids.to(torch.uint16),
+        "token_type_ids": sequence.token_type_ids.to(torch.uint8),
+        "token_instrument_ids": sequence.token_instrument_ids.to(torch.uint8),
+        "position_ids": sequence.position_ids.to(torch.int32),
+        "anchor_positions": sequence.anchor_positions.to(torch.int32),
+        "instrument_activity": targets.instrument_activity.to(torch.bool),
+        "chord": targets.chord.to(torch.int16),
+        "bass": targets.bass.to(torch.int16),
+        "key": targets.key.to(torch.int16),
+        "meter": targets.meter.to(torch.int16),
+        "note_spans": sequence.note_spans.to(torch.int32),
+        "duration_seconds": sequence.duration_seconds,
+    }
+    destination = Path(destination_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, destination)
+
+
+def load_pretraining_cache(path: str | Path) -> SymbolicSequence:
+    """Load the compact symbolic cache used by paired audio pretraining."""
+
+    payload = torch.load(path, map_location="cpu")
+    if payload.get("pretraining_cache_version") != PRETRAINING_CACHE_VERSION:
+        raise ValueError(
+            f"{path}: unsupported pretraining cache version; rebuild with "
+            "scripts/prepare_pretraining_cache.py."
+        )
+    frame_count = int(payload["anchor_positions"].numel())
+    empty_float = torch.empty((frame_count, 0), dtype=torch.float32)
+    targets = SymbolicFrameTargets(
+        note_activity=empty_float,
+        note_onset=empty_float,
+        note_offset=empty_float,
+        instrument_activity=payload["instrument_activity"].to(torch.float32),
+        beat=empty_float,
+        downbeat=empty_float,
+        chord=payload["chord"].to(torch.long),
+        bass=payload["bass"].to(torch.long),
+        key=payload["key"].to(torch.long),
+        meter=payload["meter"].to(torch.long),
+    )
+    return SymbolicSequence(
+        token_ids=payload["token_ids"].to(torch.long),
+        token_type_ids=payload["token_type_ids"].to(torch.long),
+        token_instrument_ids=payload["token_instrument_ids"].to(torch.long),
+        position_ids=payload["position_ids"].to(torch.long),
+        anchor_positions=payload["anchor_positions"].to(torch.long),
+        frame_targets=targets,
+        duration_seconds=float(payload["duration_seconds"]),
+        note_spans=payload["note_spans"].to(torch.long),
+    )
+
+
 class CachedSymbolicDataset(Dataset[SymbolicSequence]):
     """Dataset for the precomputed ``.pt`` symbolic caches.
 
@@ -1111,6 +1179,7 @@ __all__ = [
     "NOTE_ON_TOKEN_BASE",
     "PAD_TOKEN_ID",
     "PITCH_CLASSES",
+    "PRETRAINING_CACHE_VERSION",
     "SYMBOLIC_REQUIRED_VOCAB_SIZE",
     "CachedSymbolicDataset",
     "MIDIEventTokenizer",
@@ -1125,5 +1194,7 @@ __all__ = [
     "encode_key_name",
     "encode_meter",
     "load_symbolic_cache",
+    "load_pretraining_cache",
     "random_crop_symbolic_sequence",
+    "save_pretraining_cache",
 ]

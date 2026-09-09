@@ -1,6 +1,7 @@
 """Audio representations for inference and downstream task training."""
 
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Optional
 
 import torch
 import torchaudio
@@ -138,7 +139,7 @@ class MaskedAudioEncoder(nn.Module):
 
     def forward(
         self,
-        audio: Tensor,
+        audio: Optional[Tensor],
         mask: Optional[Tensor] = None,
         padding_mask: Optional[Tensor] = None,
         mel_features: Optional[Tensor] = None,
@@ -146,7 +147,12 @@ class MaskedAudioEncoder(nn.Module):
         # [B, C, S] -> [B, T_a, D_mel] -> [B, T_a, D_a].
         # Pretraining can pass the Mel features already computed for the
         # acoustic teacher so the expensive STFT is not repeated.
-        x = self.frontend(audio) if mel_features is None else mel_features
+        if mel_features is None:
+            if audio is None:
+                raise ValueError("audio is required when mel_features is not provided.")
+            x = self.frontend(audio)
+        else:
+            x = mel_features
         x = self.input_projection(x)
 
         if mask is not None:
@@ -159,9 +165,7 @@ class MaskedAudioEncoder(nn.Module):
         # Transformer.py expects True for an allowed key position, while this
         # module exposes the usual padding convention: True means padding.
         attention_mask = None if padding_mask is None else ~padding_mask.bool()
-        use_checkpoint = (
-            self.use_gradient_checkpoint and self.training and torch.is_grad_enabled()
-        )
+        use_checkpoint = self.use_gradient_checkpoint and self.training and torch.is_grad_enabled()
 
         def encode(hidden: Tensor) -> Tensor:
             return self.encoder(hidden, attention_mask=attention_mask)

@@ -2,6 +2,7 @@ import json
 from dataclasses import asdict
 
 import mido
+import numpy as np
 import pytest
 import soundfile as sf
 import torch
@@ -10,7 +11,7 @@ from train.config import TrainingConfig
 from train.data import PairedAudioDataset, collate_pretraining_windows
 from train.losses import PretrainingLoss
 from train.mel_rvq.model import MelRVQTokenizer
-from train.symbolic import MIDIEventTokenizer
+from train.symbolic import MIDIEventTokenizer, load_pretraining_cache, save_pretraining_cache
 from train.symbolic_teacher.model import SymbolicTeacher
 from train.symbolic_teacher.prepare_dataset import _save_token_cache
 from train.train import build_parser, load_teachers, make_span_mask, pretraining_losses, train
@@ -106,6 +107,57 @@ def test_padded_batch_updates_student_and_projection_only(training_files):
         if not name.startswith("encoder.projection."):
             assert torch.equal(value, original[name])
     assert not model.symbolic_teacher.encoder.training
+
+
+def test_compact_pretraining_cache_preserves_crop_inputs(training_files, tmp_path):
+    config, manifest, _, _ = training_files
+    entry = json.loads(manifest.read_text(encoding="utf-8"))[0]
+    source = manifest.parent / entry["token_path"]
+    compact = tmp_path / "pretraining.pt"
+    save_pretraining_cache(source, compact)
+
+    sequence = load_pretraining_cache(compact)
+    original = torch.load(source, map_location="cpu")
+    assert sequence.token_ids.dtype == torch.long
+    assert sequence.frame_targets.note_activity.shape[1] == 0
+    assert torch.equal(sequence.frame_targets.instrument_activity, original["frame_targets"]["instrument_activity"])
+
+    compact_manifest = tmp_path / "compact_manifest.json"
+    compact_manifest.write_text(
+        json.dumps([{"audio_path": entry["audio_path"], "pretraining_token_path": str(compact)}]),
+        encoding="utf-8",
+    )
+    dataset = PairedAudioDataset(compact_manifest, config, crop_frames=20)
+    assert dataset[0].symbolic.token_ids.numel() > 0
+
+
+def test_cached_mel_windows_replace_waveform_batches(training_files, tmp_path):
+    config, manifest, mel_path, _ = training_files
+    mel_teacher = MelRVQTokenizer.from_checkpoint(mel_path)
+    entries = json.loads(manifest.read_text(encoding="utf-8"))[:2]
+    cached_entries = []
+    for index, entry in enumerate(entries):
+        audio, rate = sf.read(manifest.parent / entry["audio_path"], dtype="float32", always_2d=True)
+        waveform = torch.from_numpy(audio.T.copy()).unsqueeze(0)
+        waveform = waveform.repeat(1, 2, 1) if waveform.size(1) == 1 else waveform[:, :2]
+        features = mel_teacher.frontend(waveform).squeeze(0).numpy()
+        mel_path_cache = tmp_path / f"{index}.npy"
+        np.save(mel_path_cache, features.astype(np.float16))
+        cached_entries.append(
+            {
+                "audio_path": entry["audio_path"],
+                "token_path": entry["token_path"],
+                "mel_path": str(mel_path_cache),
+                "mel_frames": features.shape[0],
+            }
+        )
+    cached_manifest = tmp_path / "mel_manifest.json"
+    cached_manifest.write_text(json.dumps(cached_entries), encoding="utf-8")
+
+    dataset = PairedAudioDataset(cached_manifest, config, crop_frames=20)
+    batch = collate_pretraining_windows([dataset[0], dataset[1]])
+    assert "mel_features" in batch
+    assert "audio" not in batch
 
 
 def test_ablation_modes_select_only_requested_losses(training_files):
@@ -220,3 +272,37 @@ def test_training_resume_matches_uninterrupted_run_and_exports(training_files, t
     exported = TsumugiMRLModel.from_pretrained(resumed / "audio_model").eval()
     assert exported(torch.randn(1, 2, 8820)).shape[-1] == 16
     assert exported.audio_encoder.frontend.mel_stats == (-10.0, 5.0)
+
+
+def test_save_interval_thins_numbered_checkpoints(training_files, tmp_path):
+    _, manifest, mel_path, symbolic_path = training_files
+    parser = build_parser()
+    output = tmp_path / "interval"
+    train(
+        parser.parse_args(
+            [
+                "--manifest",
+                str(manifest),
+                "--output-dir",
+                str(output),
+                "--epochs",
+                "3",
+                "--save-interval",
+                "2",
+                "--batch-size",
+                "2",
+                "--crop-frames",
+                "20",
+                "--device",
+                "cpu",
+                "--mel-checkpoint",
+                str(mel_path),
+                "--symbolic-checkpoint",
+                str(symbolic_path),
+            ]
+        )
+    )
+    # Epoch 2 lands on the interval and epoch 3 is the final epoch; the
+    # resume checkpoint is written after every epoch either way.
+    assert sorted(path.name for path in output.glob("epoch_*.pt")) == ["epoch_0002.pt", "epoch_0003.pt"]
+    assert torch.load(output / "last.pt", map_location="cpu")["epoch"] == 3
