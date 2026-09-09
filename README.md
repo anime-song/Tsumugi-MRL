@@ -191,8 +191,10 @@ uv run --extra train python -m pytest -q tests
 ## Linear probe results
 
 Test-set F1 from frozen audio representations. The random row uses the
-random-initialized encoder; the remaining rows will be filled after evaluation.
-Values are macro-F1 except for Ballroom, which uses binary F1.
+random-initialized encoder, and the Mel RVQ row uses the 625-epoch acoustic
+pretraining run; the remaining rows will be filled after evaluation. Values are
+macro-F1 except for Ballroom, which uses binary F1. See
+[linear probes](probes/README.md) for the probe settings and accuracy figures.
 
 <table>
 <thead>
@@ -238,13 +240,13 @@ Values are macro-F1 except for Ballroom, which uses binary F1.
 </tr>
 <tr>
 <td>+ Mel RVQ</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td><strong>71.99%</strong></td>
+<td>61.92%</td>
+<td><strong>31.50%</strong></td>
+<td>22.40%</td>
+<td>41.25%</td>
+<td><strong>78.87%</strong></td>
+<td><strong>23.37%</strong></td>
 </tr>
 <tr>
 <td>+ Symbolic Teacher</td>
