@@ -141,6 +141,18 @@ class ResidualVectorQuantizer(nn.Module):
         if valid_mask is not None and valid_mask.shape != x.shape[:-1]:
             raise ValueError(f"valid_mask must have shape {tuple(x.shape[:-1])}, got {tuple(valid_mask.shape)}.")
 
+        # The nearest-code search compares cosine similarities that often
+        # differ by less than one percent, and bfloat16 keeps only seven
+        # fraction bits. Under autocast those comparisons tie and argmax keeps
+        # returning the same entry: on the symbolic teacher one stage fell to a
+        # perplexity of 1.5 and half the first-stage codes changed. The
+        # quantizer therefore runs in float32 whatever precision the caller
+        # uses, which also keeps the pretraining targets identical to the codes
+        # the teacher was evaluated with.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            return self._quantize(x.float(), valid_mask)
+
+    def _quantize(self, x: Tensor, valid_mask: Optional[Tensor]) -> RVQOutput:
         def mse(left: Tensor, right: Tensor) -> Tensor:
             squared_error = (left - right).square()
             if valid_mask is None:

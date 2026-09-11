@@ -577,3 +577,19 @@ def test_conformer_block_trains_every_path():
     ):
         assert module.weight.grad is not None and module.weight.grad.abs().sum() > 0, name
 
+
+def test_rvq_ignores_the_callers_autocast_precision():
+    torch.manual_seed(0)
+    rvq = ResidualVectorQuantizer(input_dim=16, num_codebooks=4, codebook_size=64, codebook_dim=4).eval()
+    x = torch.randn(2, 50, 16)
+
+    expected = rvq(x)
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        mixed = rvq(x)
+
+    # Nearest-code similarities often differ by less than bfloat16 resolves,
+    # so the codes must come from a float32 search even inside autocast.
+    assert mixed.quantized.dtype == torch.float32
+    assert torch.equal(mixed.codes, expected.codes)
+    assert torch.allclose(mixed.quantized, expected.quantized)
+
