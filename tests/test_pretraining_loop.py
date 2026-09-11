@@ -105,7 +105,7 @@ def test_padded_batch_updates_student_and_projection_only(training_files):
     losses = pretraining_losses(model, mel, batch, PretrainingLoss(), 0.5, 3)
     assert set(losses) == {"loss_total", "loss_acoustic", "loss_musical", "loss_contrastive"}
     losses["loss_total"].backward()
-    assert model.audio_encoder.input_projection.weight.grad.abs().sum() > 0
+    assert model.audio_encoder.subsampling.projection.weight.grad.abs().sum() > 0
     assert model.symbolic_teacher.encoder.projection.net[0].weight.grad.abs().sum() > 0
     assert all(p.grad is None for p in mel.parameters())
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad))

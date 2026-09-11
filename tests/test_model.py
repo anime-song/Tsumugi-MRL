@@ -277,7 +277,13 @@ def test_stereo_forward_and_three_losses():
         projection_dim=16,
     )
     model = TsumugiMRLModel(config)
-    assert model.audio_encoder.input_projection.in_features == 2 * config.n_mels * config.temporal_fold
+    subsampling = model.audio_encoder.subsampling
+    # The convolution reads the spectrogram itself, so its input channels
+    # are the audio channels and the token vector is what survives the
+    # frequency reduction.
+    assert subsampling.blocks[0].conv1.in_channels == config.audio_channels
+    assert subsampling.projection.in_features == config.conv_channels * (config.n_mels // 4)
+    assert subsampling.projection.out_features == config.d_model
 
     audio = torch.randn(2, 2, 22_050 * 2)
     rvq_teacher = MelRVQTokenizer(config)
@@ -355,7 +361,7 @@ def test_audio_encoder_gradient_checkpointing_backpropagates():
     encoder(audio).square().mean().backward()
 
     assert encoder.use_gradient_checkpoint
-    assert encoder.input_projection.weight.grad is not None
+    assert encoder.subsampling.projection.weight.grad is not None
 
 
 def test_audio_export_reload_and_downstream_gradients(tmp_path):
@@ -393,7 +399,7 @@ def test_audio_export_reload_and_downstream_gradients(tmp_path):
     assert torch.allclose(restored.encode_embedding(audio), expected.audio_embedding)
     restored.train()
     restored(audio).square().mean().backward()
-    assert restored.audio_encoder.input_projection.weight.grad is not None
+    assert restored.audio_encoder.subsampling.projection.weight.grad is not None
 
 
 def test_inference_import_does_not_load_training_or_midi_modules():
@@ -425,3 +431,79 @@ def test_legacy_mel_checkpoint_ignores_unrelated_symbolic_settings(tmp_path):
     restored = MelRVQTokenizer.from_checkpoint(path)
     audio = torch.randn(1, 2, 8820)
     assert torch.equal(teacher.encode(audio), restored.encode(audio))
+
+
+def _subsampling_config(**overrides):
+    settings = dict(n_mels=8, n_fft=512, d_model=16, n_heads=4, num_layers=1, dim_feedforward=32, conv_channels=4)
+    settings.update(overrides)
+    return ModelConfig(**settings)
+
+
+def test_unfold_recovers_the_mel_spectrogram():
+    config = _subsampling_config()
+    frontend = StereoMelFrontend(config).eval()
+    frontend.set_mel_stats(-5.0, 2.0)
+    audio = torch.randn(2, 2, 8_820)
+
+    with torch.no_grad():
+        folded = frontend(audio)
+        normalized = (frontend.to_db(frontend.mel(audio)) - frontend.mel_mean) / frontend.mel_std
+        recovered = frontend.unfold(folded)
+
+    # The cache stores the folded view, so the convolution can only use it if
+    # unfolding is exact rather than approximate.
+    assert recovered.shape == (2, config.audio_channels, config.n_mels, folded.size(1) * config.temporal_fold)
+    assert torch.equal(recovered, normalized[..., : recovered.size(-1)])
+
+
+def test_subsampling_keeps_one_token_per_folded_frame():
+    for temporal_fold in (1, 2, 4):
+        config = _subsampling_config(temporal_fold=temporal_fold)
+        encoder = MaskedAudioEncoder(config).eval()
+        audio = torch.randn(2, 2, 8_820)
+        with torch.no_grad():
+            tokens = encoder.frontend(audio).size(1)
+            hidden = encoder(audio)
+        # The convolution replaces the fold, so the token rate is unchanged
+        # however the reduction is split between the two blocks.
+        assert hidden.shape == (2, tokens, config.d_model), temporal_fold
+
+
+def test_masking_happens_before_the_convolution():
+    torch.manual_seed(0)
+    config = _subsampling_config()
+    encoder = MaskedAudioEncoder(config).eval()
+    features = torch.randn(2, 12, config.temporal_fold * config.audio_channels * config.n_mels)
+    mask = torch.zeros(2, 12, dtype=torch.bool)
+    mask[:, 4:8] = True
+
+    altered = features.clone()
+    altered[:, 4:8] = torch.randn_like(altered[:, 4:8]) * 10
+
+    with torch.no_grad():
+        masked = encoder(None, mask=mask, mel_features=features)
+        masked_altered = encoder(None, mask=mask, mel_features=altered)
+        unmasked = encoder(None, mel_features=features)
+        unmasked_altered = encoder(None, mel_features=altered)
+
+    # Masked frames are replaced before the convolution mixes neighbours in,
+    # so their content cannot reach any output token. Applying the mask after
+    # the convolution would leak the prediction target into its own input.
+    assert torch.equal(masked, masked_altered)
+    assert not torch.allclose(unmasked, unmasked_altered)
+
+
+def test_mask_token_is_a_trained_mel_column():
+    config = _subsampling_config()
+    encoder = MaskedAudioEncoder(config).train()
+    audio = torch.randn(2, 2, 8_820)
+    tokens = encoder.frontend(audio).size(1)
+    mask = torch.zeros(2, tokens, dtype=torch.bool)
+    mask[:, : tokens // 2] = True
+
+    encoder(audio, mask=mask).square().mean().backward()
+
+    assert encoder.mask_token.shape == (config.audio_channels, config.n_mels)
+    assert encoder.mask_token.grad is not None
+    assert encoder.mask_token.grad.abs().sum() > 0
+

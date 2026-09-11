@@ -12,6 +12,7 @@ class ModelConfig:
     hop_length: int = 441
     temporal_fold: int = 2
     max_audio_seconds: float = 30.0
+    conv_channels: int = 512
     d_model: int = 512
     n_heads: int = 8
     num_layers: int = 8
@@ -25,8 +26,12 @@ class ModelConfig:
             raise ValueError("Tsumugi-MRL expects stereo audio at 22050 Hz.")
         if self.hop_length <= 0 or self.sample_rate % self.hop_length:
             raise ValueError("hop_length must divide sample_rate exactly.")
-        if self.temporal_fold <= 0:
-            raise ValueError("temporal_fold must be positive.")
+        if self.temporal_fold not in (1, 2, 4):
+            raise ValueError("temporal_fold must be 1, 2 or 4: two convolution blocks divide the time axis.")
+        if self.n_mels % 4:
+            raise ValueError("n_mels must be a multiple of four: each convolution block halves the frequency axis.")
+        if self.conv_channels <= 0:
+            raise ValueError("conv_channels must be positive.")
         if self.d_model % self.n_heads or (self.d_model // self.n_heads) % 2:
             raise ValueError("RoPE requires an even attention head dimension.")
         if self.dim_feedforward % self.d_model:

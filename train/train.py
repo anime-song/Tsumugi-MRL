@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--crop-frames", type=int, default=750)
     parser.add_argument("--mask-ratio", type=float, default=0.5)
-    parser.add_argument("--mask-span", type=int, default=10)
+    parser.add_argument("--mask-span", type=int, default=18)
 
     # Optimization and runtime settings. The defaults follow MuQ's fairseq
     # pretraining recipe (Adam 5e-4, betas 0.9/0.98, eps 1e-6, weight decay
