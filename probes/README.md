@@ -91,3 +91,27 @@ drops from 27.35% to 23.37%. Beat tracking gains the most (+29.53 points of
 F1), followed by instrument recognition on OpenMIC and NSynth. Results are
 saved under each probe's `results/mel_rvq.json`, and NSynth instrument family
 uses `results/family_mel_rvq.json`.
+
+## Symbolic teacher pretraining
+
+The same 625-epoch schedule with `--ablation symbolic_teacher`, which adds
+symbolic RVQ code prediction to the acoustic objective. The encoder is exported
+to `checkpoints/pretraining_symbolic/audio_model`.
+
+| Probe | Best / max epoch | Test metrics |
+| --- | ---: | --- |
+| NSynth pitch | 19 / 30 | accuracy 88.21%, macro-F1 75.62% |
+| NSynth instrument family | 11 / 30 | accuracy 64.36%, macro-F1 58.40% |
+| GuitarSet chord | 1 / 30 | accuracy 46.49%, macro-F1 41.35% |
+| FMA-small genre | 47 / 100 | accuracy 50.63%, macro-F1 25.15% |
+| OpenMIC instrument | 80 / 100 | micro-F1 39.34%, macro-F1 38.66% |
+| Ballroom beat | 6 / 30 | F1 77.12%, accuracy 87.64% |
+| GiantSteps key | 5 / 30 | accuracy 56.90%, macro-F1 30.43% |
+
+The symbolic targets help the tasks the MIDI teacher models directly: chord
+recognition gains 9.85 points of macro-F1 over Mel-RVQ alone, and GiantSteps
+key recovers from 23.37% to 30.43%, above the random baseline it had fallen
+below. Timbre-driven probes give back a little, with NSynth instrument family
+at 58.40% and OpenMIC at 38.66% against 61.92% and 41.25% for Mel-RVQ.
+Results use each probe's `results/symbolic_teacher.json`, and NSynth instrument
+family uses `results/family_symbolic_teacher.json`.
