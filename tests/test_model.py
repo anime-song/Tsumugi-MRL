@@ -75,6 +75,42 @@ def test_mel_rvq_reconstruction_is_measured_on_the_codes():
     assert torch.allclose(result.reconstruction_loss, expected)
 
 
+def test_cached_mel_windows_match_the_audio_path(tmp_path):
+    import json
+
+    import numpy as np
+
+    from train.mel_rvq.config import MelRVQConfig
+    from train.mel_rvq.train import CachedMelDataset, frames_per_clip
+
+    config = MelRVQConfig(n_mels=8, n_fft=512, acoustic_codebooks=2, acoustic_vocab_size=8)
+    tokenizer = MelRVQTokenizer(config).eval()
+    audio = torch.randn(1, 2, 22_050)
+    mel = tokenizer.frontend(audio)
+    with torch.no_grad():
+        from_audio = tokenizer(audio)
+        from_cache = tokenizer.forward_features(mel)
+    assert torch.equal(from_audio.codes, from_cache.codes)
+    assert torch.allclose(from_audio.reconstruction_loss, from_cache.reconstruction_loss)
+
+    # A cache entry is read back at the window length the frontend produces.
+    cache_path = tmp_path / "000000.npy"
+    np.save(cache_path, mel.squeeze(0).numpy())
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps([{"mel_path": "000000.npy", "mel_frames": int(mel.size(1))}]),
+        encoding="utf-8",
+    )
+    window = frames_per_clip(config, 0.5)
+    dataset = CachedMelDataset(manifest, frames_per_clip=window)
+    assert len(dataset) == 1
+    assert dataset[0].shape == (window, mel.size(-1))
+
+    # Short entries are padded rather than dropped.
+    padded = CachedMelDataset(manifest, frames_per_clip=int(mel.size(1)) + 5)
+    assert padded[0].shape == (int(mel.size(1)) + 5, mel.size(-1))
+
+
 def test_rvq_projects_each_stage_into_a_codebook_bottleneck():
     rvq = ResidualVectorQuantizer(
         input_dim=6,
@@ -95,6 +131,76 @@ def test_rvq_projects_each_stage_into_a_codebook_bottleneck():
     assert result.codes.shape == (2, 4, 3)
     assert result.quantized.shape == x.shape
     assert rvq.decode(result.codes).shape == x.shape
+
+
+def test_rvq_reports_codebook_perplexity():
+    rvq = ResidualVectorQuantizer(
+        input_dim=2,
+        num_codebooks=1,
+        codebook_size=4,
+    )
+    _set_identity_projections(rvq)
+    with torch.no_grad():
+        rvq.codebooks.copy_(torch.tensor([[[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]]))
+
+    # Two of the four codes are used equally often, so the effective code
+    # count is two rather than the full codebook size.
+    balanced = rvq(torch.tensor([[[1.0, 0.0], [0.0, 1.0]]]))
+    assert torch.allclose(balanced.perplexity, torch.tensor([2.0]))
+
+    # A stage that always picks the same code has a perplexity of one.
+    collapsed = rvq(torch.tensor([[[1.0, 0.0], [2.0, 0.0]]]))
+    assert torch.allclose(collapsed.perplexity, torch.tensor([1.0]))
+
+
+def test_rvq_revives_stale_codes_from_the_batch():
+    rvq = ResidualVectorQuantizer(
+        input_dim=4,
+        num_codebooks=1,
+        codebook_size=8,
+        stale_tolerance=2,
+    ).train()
+    x = torch.randn(2, 6, 4)
+
+    before = rvq.codebooks.detach().clone()
+    used = torch.bincount(rvq(x).codes.reshape(-1), minlength=8) > 0
+    # One step short of the tolerance nothing moves yet.
+    assert torch.equal(rvq.codebooks.detach(), before)
+    assert bool((rvq.stale_counter[0][~used] == 1).all())
+
+    rvq(x)
+    revived = rvq.codebooks.detach()
+    assert not torch.equal(revived[0][~used], before[0][~used])
+    # Entries the batch selected are left alone, and their counters stay at zero.
+    assert torch.equal(revived[0][used], before[0][used])
+    assert bool((rvq.stale_counter[0][~used] == 0).all())
+
+    # Evaluation never rewrites the codebook.
+    rvq.eval()
+    frozen = rvq.codebooks.detach().clone()
+    for _ in range(4):
+        rvq(x)
+    assert torch.equal(rvq.codebooks.detach(), frozen)
+
+
+def test_rvq_backward_survives_a_codebook_revival():
+    # The revival rewrites codebook rows that the graph above already read,
+    # so the step it fires on must still produce gradients.
+    rvq = ResidualVectorQuantizer(
+        input_dim=4,
+        num_codebooks=3,
+        codebook_size=8,
+        codebook_dim=2,
+        stale_tolerance=1,
+    ).train()
+    x = torch.randn(2, 6, 4)
+
+    for _ in range(3):
+        result = rvq(x)
+        result.loss.backward()
+        assert rvq.codebooks.grad is not None
+        assert torch.isfinite(result.loss)
+        rvq.zero_grad(set_to_none=True)
 
 
 def test_rvq_reconstruction_reaches_the_projections():

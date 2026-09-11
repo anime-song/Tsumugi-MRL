@@ -18,6 +18,21 @@ The loader resamples audio and converts it to stereo automatically.
 `--clip-seconds` sets the training clip length (default: 4 seconds), and
 `--batch-size` sets the batch size (default: 8).
 
+Training can also read the Mel cache built by
+`scripts/prepare_pretraining_cache.py`, which skips audio decoding and the
+STFT:
+
+```powershell
+uv run --extra train python -m train.mel_rvq.train `
+  --mel-manifest datasets/symbolic/pretraining_cache/manifest.json `
+  --output-dir checkpoints/mel_rvq --epochs 20
+```
+
+Pass exactly one of `--audio-dir` or `--mel-manifest`. Cached features are
+already normalized, so the statistics cannot be estimated from them: copy the
+`mel_stats.json` used to build the cache into the output directory, or point
+`--stats-path` at it.
+
 Training saves `last.pt` and `epoch_XXXX.pt` in the output directory.
 Mel normalization statistics are estimated on the first run and saved in
 `mel_stats.json` and each checkpoint. Use `--stats-clips N` to limit the number
@@ -27,7 +42,13 @@ The tokenizer quantizes the folded Mel features directly. It defaults to 8
 codebooks and 1,024 entries per codebook, and each quantizer stage projects the
 residual down to a 16-dimensional codebook space before the lookup, then back
 up again. Change these with `--codebooks`, `--codebook-size`, and
-`--codebook-dim`. Run with `--help` for all options.
+`--codebook-dim`. An entry that goes unused for `--stale-tolerance` steps is
+revived from the current batch, which keeps codebooks from dying. Run with
+`--help` for all options.
+
+Each log line reports the codebook perplexity, the effective number of entries
+each stage uses. It is logged per stage and as an average, and a stage that
+collapses shows up there before the loss moves.
 
 For Weights & Biases logging, run `uv run --extra train wandb login` and add
 `--wandb` to the training command. Set `--wandb-project` and `--wandb-name` to

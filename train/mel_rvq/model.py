@@ -41,6 +41,7 @@ class MelRVQTokenizer(nn.Module, PyTorchModelHubMixin):
             codebook_size=config.acoustic_vocab_size,
             commitment_weight=config.rvq_commitment_weight,
             codebook_dim=config.acoustic_codebook_dim,
+            stale_tolerance=config.rvq_stale_tolerance,
         )
         self.reconstruction_weight = config.rvq_reconstruction_weight
         # Keep the full dataclass so save_pretrained() writes every
@@ -75,7 +76,16 @@ class MelRVQTokenizer(nn.Module, PyTorchModelHubMixin):
 
     def forward(self, audio: Tensor) -> RVQOutput:
         # Frontend: stereo waveform [B, C, S] -> folded Mel [B, T_a, D_mel].
-        mel = self.frontend(audio)
+        return self.forward_features(self.frontend(audio))
+
+    def forward_features(self, mel: Tensor) -> RVQOutput:
+        """Quantize normalized folded Mel features straight from a cache.
+
+        Training can read precomputed features instead of decoding audio, so
+        the frontend is skipped here. The cache must carry the same Mel
+        statistics the frontend would apply.
+        """
+
         # RVQ quantizes the Mel features directly, keeping the continuous
         # representation at [B, T_a, D_mel] and emitting one integer code per
         # codebook: [B, T_a, N_acoustic].
@@ -91,6 +101,7 @@ class MelRVQTokenizer(nn.Module, PyTorchModelHubMixin):
             commitment_loss=result.commitment_loss,
             loss=result.loss + self.reconstruction_weight * reconstruction_loss,
             reconstruction_loss=reconstruction_loss,
+            perplexity=result.perplexity,
         )
 
     @torch.no_grad()

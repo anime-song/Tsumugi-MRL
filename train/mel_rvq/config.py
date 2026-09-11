@@ -10,6 +10,7 @@ class MelRVQConfig(ModelConfig):
     acoustic_codebooks: int = 8
     acoustic_vocab_size: int = 1_024
     acoustic_codebook_dim: int = 16
+    rvq_stale_tolerance: int = 1_000
     rvq_commitment_weight: float = 0.25
     rvq_reconstruction_weight: float = 1.0
 
@@ -17,5 +18,7 @@ class MelRVQConfig(ModelConfig):
         super().__post_init__()
         if self.acoustic_codebook_dim <= 0:
             raise ValueError("acoustic_codebook_dim must be positive.")
+        if self.rvq_stale_tolerance <= 0:
+            raise ValueError("rvq_stale_tolerance must be positive.")
         if self.rvq_commitment_weight < 0 or self.rvq_reconstruction_weight < 0:
             raise ValueError("RVQ loss weights must be non-negative.")

@@ -20,6 +20,7 @@ class RVQOutput:
     commitment_loss: Tensor
     loss: Tensor
     reconstruction_loss: Tensor | None = None
+    perplexity: Tensor | None = None  # [num_codebooks], effective codes in use
 
 
 class ResidualVectorQuantizer(nn.Module):
@@ -47,6 +48,7 @@ class ResidualVectorQuantizer(nn.Module):
         codebook_size: int,
         commitment_weight: float = 0.25,
         codebook_dim: int | None = None,
+        stale_tolerance: int = 1_000,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
@@ -60,12 +62,15 @@ class ResidualVectorQuantizer(nn.Module):
         codebook_dim = input_dim if codebook_dim is None else codebook_dim
         if codebook_dim <= 0:
             raise ValueError("codebook_dim must be positive.")
+        if stale_tolerance <= 0:
+            raise ValueError("stale_tolerance must be positive.")
 
         self.input_dim = input_dim
         self.num_codebooks = num_codebooks
         self.codebook_size = codebook_size
         self.commitment_weight = commitment_weight
         self.codebook_dim = codebook_dim
+        self.stale_tolerance = stale_tolerance
 
         # MuQ weight-normalizes both projections, which separates each
         # projection's scale from its direction and keeps a stage from
@@ -80,9 +85,49 @@ class ResidualVectorQuantizer(nn.Module):
         bound = 1.0 / math.sqrt(codebook_dim)
         nn.init.uniform_(self.codebooks, -bound, bound)
 
+        # Consecutive steps each entry has gone unused. An entry that stays
+        # unused for stale_tolerance steps is revived from the current batch,
+        # which keeps a stage from training against codes it never selects.
+        self.register_buffer("stale_counter", torch.zeros(num_codebooks, codebook_size))
+
+    @torch.no_grad()
+    def _revive_stale_codes(self, codes: list[Tensor], projections: list[Tensor]) -> None:
+        """Reset entries that have gone unused for ``stale_tolerance`` steps.
+
+        Following MuQ, a revived entry is copied from a randomly chosen vector
+        of the batch being quantized, so it lands where the data actually is
+        instead of in an arbitrary corner of the space. Revived entries were
+        by definition not selected this step, so rewriting them here changes
+        nothing about the codes already returned.
+        """
+
+        for index, (code, projected) in enumerate(zip(codes, projections, strict=True)):
+            used = torch.bincount(code.reshape(-1), minlength=self.codebook_size) > 0
+            stale = (~used).to(self.stale_counter.dtype)
+            self.stale_counter[index] = self.stale_counter[index] * stale + stale
+
+            replace = (self.stale_counter[index] >= self.stale_tolerance).to(self.codebooks.dtype)
+            if not bool(replace.any()):
+                continue
+
+            encodings = projected.reshape(-1, self.codebook_dim)
+            if encodings.size(0) < self.codebook_size:
+                repeats = self.codebook_size // encodings.size(0) + 1
+                encodings = encodings.repeat(repeats, 1)
+            sampled = encodings[torch.randperm(encodings.size(0), device=encodings.device)][: self.codebook_size]
+            replace = replace.unsqueeze(-1)
+            # Write through .data: the codebook rows are live views inside the
+            # graph built above, and an in-place update of the parameter would
+            # invalidate them.
+            self.codebooks.data[index] = self.codebooks.data[index] * (1 - replace) + sampled * replace
+            self.stale_counter[index] = self.stale_counter[index] * (1 - replace.squeeze(-1))
+
+    @torch.no_grad()
     def _nearest_code(self, residual: Tensor, codebook: Tensor) -> Tensor:
         # MuQ uses an L2-normalized codebook lookup. This makes the
         # assignment depend on direction rather than the raw feature scale.
+        # The assignment itself is not differentiable, so it stays out of the
+        # graph and the codebook can be rewritten afterwards.
         flat = F.normalize(residual.reshape(-1, self.codebook_dim), dim=-1)
         normalized_codebook = F.normalize(codebook, dim=-1)
         similarity = flat @ normalized_codebook.transpose(0, 1)
@@ -106,6 +151,7 @@ class ResidualVectorQuantizer(nn.Module):
         residual = x
         quantized = torch.zeros_like(x)
         codes = []
+        projections = []
         codebook_losses = []
         commitment_losses = []
 
@@ -125,6 +171,7 @@ class ResidualVectorQuantizer(nn.Module):
             commitment_losses.append(mse(q.detach(), projected))
 
             codes.append(code)
+            projections.append(projected.detach())
             # The straight-through estimator keeps the projections in the
             # gradient path of the stages that follow.
             q_st = projected + (q - projected).detach()
@@ -134,7 +181,11 @@ class ResidualVectorQuantizer(nn.Module):
             # to leave a residual the later stages can quantize.
             residual = residual - expanded
 
+        if self.training:
+            self._revive_stale_codes(codes, projections)
+
         code_tensor = torch.stack(codes, dim=-1)
+        perplexity = self.code_perplexity(code_tensor, valid_mask)
         # Sum over stages rather than averaging: with eight codebooks an
         # average shrinks each stage's gradient as the stack grows deeper.
         codebook_loss = torch.stack(codebook_losses).sum()
@@ -152,7 +203,32 @@ class ResidualVectorQuantizer(nn.Module):
             codebook_loss=codebook_loss,
             commitment_loss=commitment_loss,
             loss=loss,
+            perplexity=perplexity,
         )
+
+    @torch.no_grad()
+    def code_perplexity(self, codes: Tensor, valid_mask: Optional[Tensor] = None) -> Tensor:
+        """Return the effective number of codes each stage used.
+
+        The perplexity is ``exp(entropy)`` of the code distribution in this
+        batch, so a stage that spreads its assignments evenly over the whole
+        codebook approaches ``codebook_size`` while a collapsed stage
+        approaches one. It measures usage, not reconstruction quality, and a
+        batch smaller than the codebook caps the value at the token count.
+        """
+
+        if codes.size(-1) != self.num_codebooks:
+            raise ValueError(f"Expected the last code dimension to be {self.num_codebooks}, got {codes.size(-1)}.")
+
+        perplexities = []
+        for index in range(self.num_codebooks):
+            stage = codes[..., index]
+            stage = stage[valid_mask.bool()] if valid_mask is not None else stage
+            counts = torch.bincount(stage.reshape(-1), minlength=self.codebook_size).float()
+            probabilities = counts / counts.sum().clamp_min(1.0)
+            positive = probabilities[probabilities > 0]
+            perplexities.append(torch.exp(-(positive * positive.log()).sum()))
+        return torch.stack(perplexities)
 
     @torch.no_grad()
     def encode(self, x: Tensor) -> Tensor:

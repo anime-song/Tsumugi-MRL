@@ -14,6 +14,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import soundfile as sf
 import torch
 import torch.nn.functional as F
@@ -87,6 +88,65 @@ class AudioClipDataset(Dataset[Tensor]):
         return waveform
 
 
+class CachedMelDataset(Dataset[Tensor]):
+    """Sample random windows from precomputed folded Mel features.
+
+    ``scripts/prepare_pretraining_cache.py`` writes one ``.npy`` memmap per
+    track, already folded and normalized by the frontend that built it.
+    Training from those files skips audio decoding and the STFT, which is what
+    makes an epoch disk-bound rather than CPU-bound.
+    """
+
+    def __init__(
+        self,
+        manifest: str | Path,
+        frames_per_clip: int,
+        clips_per_epoch: Optional[int] = None,
+    ) -> None:
+        if frames_per_clip <= 0:
+            raise ValueError("frames_per_clip must be positive.")
+        manifest = Path(manifest)
+        entries = json.loads(manifest.read_text(encoding="utf-8"))
+        self.paths: list[Path] = []
+        self.frames: list[int] = []
+        for entry in entries:
+            if entry.get("status") == "error" or not entry.get("mel_path"):
+                continue
+            path = Path(entry["mel_path"])
+            self.paths.append(path if path.is_absolute() else manifest.parent / path)
+            self.frames.append(int(entry["mel_frames"]))
+        if not self.paths:
+            raise FileNotFoundError(f"{manifest} lists no cached Mel features.")
+
+        self.frames_per_clip = frames_per_clip
+        self.length = len(self.paths) if clips_per_epoch is None else clips_per_epoch
+        if self.length <= 0:
+            raise ValueError("clips_per_epoch must be positive.")
+
+    def __len__(self) -> int:
+        return self.length
+
+    def __getitem__(self, index: int) -> Tensor:
+        position = index % len(self.paths)
+        # Memory-map the file so only the sampled window reaches memory.
+        cache = np.load(self.paths[position], mmap_mode="r")
+        available = min(int(cache.shape[0]), self.frames[position])
+        if available >= self.frames_per_clip:
+            start = random.randint(0, available - self.frames_per_clip)
+            window = np.asarray(cache[start : start + self.frames_per_clip], dtype=np.float32)
+            return torch.from_numpy(window)
+        window = torch.from_numpy(np.asarray(cache[:available], dtype=np.float32))
+        return F.pad(window, (0, 0, 0, self.frames_per_clip - available))
+
+
+def frames_per_clip(config: MelRVQConfig, clip_seconds: float) -> int:
+    """Folded Mel frames produced by the frontend for one clip."""
+
+    samples = round(config.sample_rate * clip_seconds)
+    mel_frames = (samples - config.n_fft) // config.hop_length + 1
+    return max(1, mel_frames // config.temporal_fold)
+
+
 def make_config(args: argparse.Namespace) -> MelRVQConfig:
     return MelRVQConfig(
         n_mels=args.n_mels,
@@ -96,6 +156,7 @@ def make_config(args: argparse.Namespace) -> MelRVQConfig:
         acoustic_codebooks=args.codebooks,
         acoustic_vocab_size=args.codebook_size,
         acoustic_codebook_dim=args.codebook_dim,
+        rvq_stale_tolerance=args.stale_tolerance,
         rvq_commitment_weight=args.commitment_weight,
         rvq_reconstruction_weight=args.reconstruction_weight,
     )
@@ -222,12 +283,23 @@ def train(args: argparse.Namespace) -> None:
     torch.manual_seed(args.seed)
 
     config = make_config(args)
+    if (args.audio_dir is None) == (args.mel_manifest is None):
+        raise ValueError("Pass exactly one of --audio-dir or --mel-manifest.")
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    dataset = AudioClipDataset(
-        audio_dir=args.audio_dir,
-        sample_rate=config.sample_rate,
-        clip_seconds=args.clip_seconds,
-        clips_per_epoch=args.clips_per_epoch,
+    cached = args.mel_manifest is not None
+    dataset = (
+        CachedMelDataset(
+            manifest=args.mel_manifest,
+            frames_per_clip=frames_per_clip(config, args.clip_seconds),
+            clips_per_epoch=args.clips_per_epoch,
+        )
+        if cached
+        else AudioClipDataset(
+            audio_dir=args.audio_dir,
+            sample_rate=config.sample_rate,
+            clip_seconds=args.clip_seconds,
+            clips_per_epoch=args.clips_per_epoch,
+        )
     )
     loader = DataLoader(
         dataset,
@@ -242,7 +314,15 @@ def train(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     stats_path = Path(args.stats_path) if args.stats_path is not None else output_dir / "mel_stats.json"
     stats_loader = None
-    if not stats_path.exists():
+    if cached and not stats_path.exists():
+        # Cached features are already normalized, so the statistics cannot be
+        # re-estimated from them. Point --stats-path at the file used to build
+        # the cache; the tokenizer needs it to run on raw audio later.
+        raise FileNotFoundError(
+            f"{stats_path} is missing. Training from a Mel cache requires the statistics "
+            "that produced it, because the cached features are already normalized."
+        )
+    if not cached and not stats_path.exists():
         stats_dataset = AudioClipDataset(
             audio_dir=args.audio_dir,
             sample_rate=config.sample_rate,
@@ -297,6 +377,7 @@ def train(args: argparse.Namespace) -> None:
 
     print(
         f"files={len(dataset.paths)} clips/epoch={len(dataset)} "
+        f"source={'mel_cache' if cached else 'audio'} "
         f"device={device} codebooks={config.acoustic_codebooks} "
         f"codebook_size={config.acoustic_vocab_size} "
         f"wandb={args.wandb}"
@@ -310,10 +391,11 @@ def train(args: argparse.Namespace) -> None:
             total_codebook_loss = 0.0
             total_commitment_loss = 0.0
             total_reconstruction_loss = 0.0
+            total_perplexity = None
 
-            for step, audio in enumerate(loader, start=1):
-                audio = audio.to(device, non_blocking=True)
-                result = tokenizer(audio)
+            for step, batch in enumerate(loader, start=1):
+                batch = batch.to(device, non_blocking=True)
+                result = tokenizer.forward_features(batch) if cached else tokenizer(batch)
 
                 optimizer.zero_grad(set_to_none=True)
                 result.loss.backward()
@@ -332,8 +414,16 @@ def train(args: argparse.Namespace) -> None:
                 total_commitment_loss += commitment_loss
                 total_reconstruction_loss += reconstruction_loss
 
+                # Codebook usage per stage, averaged over the epoch. A stage
+                # that collapses shows up here long before the loss does.
+                perplexity = result.perplexity.detach().cpu()
+                total_perplexity = perplexity if total_perplexity is None else total_perplexity + perplexity
+
                 if step % args.log_interval == 0 or step == len(loader):
-                    print(f"epoch={epoch:03d} step={step:04d}/{len(loader):04d} loss={loss:.4f}")
+                    print(
+                        f"epoch={epoch:03d} step={step:04d}/{len(loader):04d} "
+                        f"loss={loss:.4f} perplexity={float(perplexity.mean()):.1f}"
+                    )
                     if wandb_run is not None:
                         wandb.log(
                             {
@@ -341,6 +431,11 @@ def train(args: argparse.Namespace) -> None:
                                 "train/codebook_loss": codebook_loss,
                                 "train/commitment_loss": commitment_loss,
                                 "train/reconstruction_loss": reconstruction_loss,
+                                "train/perplexity": float(perplexity.mean()),
+                                **{
+                                    f"train/perplexity_{index}": value
+                                    for index, value in enumerate(perplexity.tolist())
+                                },
                                 "train/learning_rate": optimizer.param_groups[0]["lr"],
                                 "epoch": epoch,
                             },
@@ -349,14 +444,23 @@ def train(args: argparse.Namespace) -> None:
 
             denominator = max(len(loader), 1)
             average_loss = total_loss / denominator
+            average_perplexity = (total_perplexity / denominator).tolist() if total_perplexity is not None else []
             epoch_metrics = {
                 "epoch/loss": average_loss,
                 "epoch/codebook_loss": total_codebook_loss / denominator,
                 "epoch/commitment_loss": total_commitment_loss / denominator,
                 "epoch/reconstruction_loss": total_reconstruction_loss / denominator,
             }
+            if average_perplexity:
+                epoch_metrics["epoch/perplexity"] = sum(average_perplexity) / len(average_perplexity)
+                epoch_metrics.update(
+                    {f"epoch/perplexity_{index}": value for index, value in enumerate(average_perplexity)}
+                )
             save_checkpoint(tokenizer, config, output_dir, epoch, average_loss)
-            print(f"saved={output_dir / 'last.pt'} average_loss={average_loss:.4f}")
+            print(
+                f"saved={output_dir / 'last.pt'} average_loss={average_loss:.4f} "
+                f"perplexity={[round(value, 1) for value in average_perplexity]}"
+            )
             if wandb_run is not None:
                 wandb.log(epoch_metrics, step=global_step)
     finally:
@@ -366,7 +470,12 @@ def train(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--audio-dir", required=True, help="Directory containing audio files.")
+    parser.add_argument("--audio-dir", default=None, help="Directory containing audio files.")
+    parser.add_argument(
+        "--mel-manifest",
+        default=None,
+        help="Cache manifest from scripts/prepare_pretraining_cache.py; trains on cached Mel features.",
+    )
     parser.add_argument("--output-dir", default="checkpoints/mel_rvq")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -407,6 +516,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codebooks", type=int, default=8)
     parser.add_argument("--codebook-size", type=int, default=1024)
     parser.add_argument("--codebook-dim", type=int, default=16)
+    parser.add_argument(
+        "--stale-tolerance",
+        type=int,
+        default=1000,
+        help="Steps an unused codebook entry survives before it is revived from the batch.",
+    )
     parser.add_argument("--commitment-weight", type=float, default=0.25)
     parser.add_argument("--reconstruction-weight", type=float, default=1.0)
     return parser
