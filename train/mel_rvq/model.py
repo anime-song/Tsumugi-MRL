@@ -19,8 +19,14 @@ class MelRVQTokenizer(nn.Module, PyTorchModelHubMixin):
     resulting codes fixed as acoustic targets.
 
     The tokenizer operates entirely in folded Mel space:
-    ``[B, C, S] -> [B, T_a, D_mel] -> [B, T_a, D_rvq]`` -> RVQ ->
-    ``[B, T_a, D_mel]``.
+    ``[B, C, S] -> [B, T_a, D_mel]`` -> RVQ -> ``[B, T_a, D_mel]``. The Mel
+    features are quantized directly; the bottleneck lives inside the
+    quantizer, where each stage projects to ``acoustic_codebook_dim``.
+
+    Reconstruction is measured on the summed codes themselves, as in MuQ.
+    A decoder placed after the quantizer would let the codes drift away from
+    the Mel features and be linearly corrected afterwards, which removes the
+    pressure that keeps the codes faithful.
     """
 
     def __init__(self, config: MelRVQConfig) -> None:
@@ -29,14 +35,13 @@ class MelRVQTokenizer(nn.Module, PyTorchModelHubMixin):
         config = self.config
         self.frontend = StereoMelFrontend(config)
         frontend_dim = config.temporal_fold * config.audio_channels * config.n_mels
-        self.encoder = nn.Linear(frontend_dim, config.acoustic_rvq_dim)
         self.rvq = ResidualVectorQuantizer(
-            input_dim=config.acoustic_rvq_dim,
+            input_dim=frontend_dim,
             num_codebooks=config.acoustic_codebooks,
             codebook_size=config.acoustic_vocab_size,
             commitment_weight=config.rvq_commitment_weight,
+            codebook_dim=config.acoustic_codebook_dim,
         )
-        self.decoder = nn.Linear(config.acoustic_rvq_dim, frontend_dim)
         self.reconstruction_weight = config.rvq_reconstruction_weight
         # Keep the full dataclass so save_pretrained() writes every
         # architectural setting needed by from_pretrained().
@@ -71,14 +76,14 @@ class MelRVQTokenizer(nn.Module, PyTorchModelHubMixin):
     def forward(self, audio: Tensor) -> RVQOutput:
         # Frontend: stereo waveform [B, C, S] -> folded Mel [B, T_a, D_mel].
         mel = self.frontend(audio)
-        # Learned bottleneck: [B, T_a, D_mel] -> [B, T_a, D_rvq].
-        encoded = self.encoder(mel)
-        # RVQ keeps the continuous quantized representation at [B, T_a, D_rvq]
-        # and emits one integer code per codebook: [B, T_a, N_acoustic].
-        result = self.rvq(encoded)
-        # Linear decoder: [B, T_a, D_rvq] -> reconstructed [B, T_a, D_mel].
-        reconstructed = self.decoder(result.quantized)
-        reconstruction_loss = nn.functional.mse_loss(reconstructed, mel)
+        # RVQ quantizes the Mel features directly, keeping the continuous
+        # representation at [B, T_a, D_mel] and emitting one integer code per
+        # codebook: [B, T_a, N_acoustic].
+        result = self.rvq(mel)
+        # L1 between the summed codes and the Mel features. It keeps loud Mel
+        # bins from dominating the gradient the way a squared error does, so
+        # quiet detail still shapes the codebooks.
+        reconstruction_loss = nn.functional.l1_loss(result.quantized, mel)
         return RVQOutput(
             quantized=result.quantized,
             codes=result.codes,
@@ -98,9 +103,9 @@ class MelRVQTokenizer(nn.Module, PyTorchModelHubMixin):
     def encode_features(self, mel_features: Tensor) -> Tensor:
         """Create fixed acoustic targets from normalized folded Mel features."""
 
-        return self.rvq.encode(self.encoder(mel_features))
+        return self.rvq.encode(mel_features)
 
     def decode(self, codes: Tensor) -> Tensor:
         """Decode ``[B, T_a, N_acoustic]`` codes to ``[B, T_a, D_mel]``."""
 
-        return self.decoder(self.rvq.decode(codes))
+        return self.rvq.decode(codes)

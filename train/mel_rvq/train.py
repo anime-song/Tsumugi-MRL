@@ -95,7 +95,7 @@ def make_config(args: argparse.Namespace) -> MelRVQConfig:
         temporal_fold=args.temporal_fold,
         acoustic_codebooks=args.codebooks,
         acoustic_vocab_size=args.codebook_size,
-        acoustic_rvq_dim=args.rvq_dim,
+        acoustic_codebook_dim=args.codebook_dim,
         rvq_commitment_weight=args.commitment_weight,
         rvq_reconstruction_weight=args.reconstruction_weight,
     )
@@ -406,7 +406,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temporal-fold", type=int, default=2)
     parser.add_argument("--codebooks", type=int, default=8)
     parser.add_argument("--codebook-size", type=int, default=1024)
-    parser.add_argument("--rvq-dim", type=int, default=128)
+    parser.add_argument("--codebook-dim", type=int, default=16)
     parser.add_argument("--commitment-weight", type=float, default=0.25)
     parser.add_argument("--reconstruction-weight", type=float, default=1.0)
     return parser

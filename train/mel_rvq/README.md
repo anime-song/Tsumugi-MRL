@@ -23,9 +23,11 @@ Mel normalization statistics are estimated on the first run and saved in
 `mel_stats.json` and each checkpoint. Use `--stats-clips N` to limit the number
 of clips used for estimation.
 
-The tokenizer defaults to 8 codebooks, 1,024 entries per codebook, and an RVQ
-dimension of 128. Change these with `--codebooks`, `--codebook-size`, and
-`--rvq-dim`. Run with `--help` for all options.
+The tokenizer quantizes the folded Mel features directly. It defaults to 8
+codebooks and 1,024 entries per codebook, and each quantizer stage projects the
+residual down to a 16-dimensional codebook space before the lookup, then back
+up again. Change these with `--codebooks`, `--codebook-size`, and
+`--codebook-dim`. Run with `--help` for all options.
 
 For Weights & Biases logging, run `uv run --extra train wandb login` and add
 `--wandb` to the training command. Set `--wandb-project` and `--wandb-name` to

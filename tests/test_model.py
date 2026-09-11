@@ -27,12 +27,27 @@ def test_rvq_codes_quantized_output_and_decode():
     assert torch.isfinite(result.loss)
 
 
+def _set_identity_projections(rvq: ResidualVectorQuantizer) -> None:
+    """Make every stage project through unchanged for exact loss checks."""
+
+    from torch.nn.utils import parametrize
+
+    for projection in (*rvq.input_projections, *rvq.output_projections):
+        # Drop the weight-norm parametrization so the weight can be set directly.
+        if parametrize.is_parametrized(projection, "weight"):
+            parametrize.remove_parametrizations(projection, "weight", leave_parametrized=True)
+        with torch.no_grad():
+            projection.weight.copy_(torch.eye(rvq.input_dim))
+            projection.bias.zero_()
+
+
 def test_rvq_uses_normalized_lookup_and_raw_losses():
     rvq = ResidualVectorQuantizer(
         input_dim=2,
         num_codebooks=1,
         codebook_size=2,
     )
+    _set_identity_projections(rvq)
     with torch.no_grad():
         rvq.codebooks.copy_(torch.tensor([[[1.0, 0.0], [10.0, 1.0]]]))
 
@@ -45,6 +60,60 @@ def test_rvq_uses_normalized_lookup_and_raw_losses():
     expected = torch.nn.functional.mse_loss(torch.tensor([[[1.0, 0.0]]]), x)
     assert torch.allclose(result.codebook_loss, expected)
     assert torch.allclose(result.commitment_loss, expected)
+
+
+def test_mel_rvq_reconstruction_is_measured_on_the_codes():
+    from train.mel_rvq.config import MelRVQConfig
+
+    config = MelRVQConfig(n_mels=8, n_fft=512, acoustic_codebooks=2, acoustic_vocab_size=8)
+    tokenizer = MelRVQTokenizer(config)
+    audio = torch.randn(1, 2, 22_050)
+    result = tokenizer(audio)
+
+    mel = tokenizer.frontend(audio)
+    expected = (result.quantized - mel).abs().mean()
+    assert torch.allclose(result.reconstruction_loss, expected)
+
+
+def test_rvq_projects_each_stage_into_a_codebook_bottleneck():
+    rvq = ResidualVectorQuantizer(
+        input_dim=6,
+        num_codebooks=3,
+        codebook_size=8,
+        codebook_dim=2,
+    )
+
+    assert rvq.codebooks.shape == (3, 8, 2)
+    assert len(rvq.input_projections) == len(rvq.output_projections) == 3
+    assert rvq.input_projections[0].in_features == 6
+    assert rvq.input_projections[0].out_features == 2
+    assert rvq.output_projections[0].in_features == 2
+    assert rvq.output_projections[0].out_features == 6
+
+    x = torch.randn(2, 4, 6)
+    result = rvq(x)
+    assert result.codes.shape == (2, 4, 3)
+    assert result.quantized.shape == x.shape
+    assert rvq.decode(result.codes).shape == x.shape
+
+
+def test_rvq_sums_stage_losses():
+    rvq = ResidualVectorQuantizer(
+        input_dim=2,
+        num_codebooks=2,
+        codebook_size=2,
+    )
+    _set_identity_projections(rvq)
+    with torch.no_grad():
+        rvq.codebooks.copy_(torch.tensor([[[1.0, 0.0], [0.0, 1.0]], [[1.0, 0.0], [0.0, 1.0]]]))
+
+    x = torch.tensor([[[4.0, 0.0]]])
+    result = rvq(x)
+
+    # Stage one leaves the residual [3, 0] and stage two leaves [2, 0], so an
+    # average would report 6.5 where the sum reports 13.
+    assert torch.allclose(result.codebook_loss, torch.tensor(13.0) / 2)
+    assert torch.allclose(result.commitment_loss, torch.tensor(13.0) / 2)
 
 
 def test_mel_stats_are_applied_and_saved_in_state_dict():
@@ -91,10 +160,13 @@ def test_stereo_forward_and_three_losses():
     audio = torch.randn(2, 2, 22_050 * 2)
     rvq_teacher = MelRVQTokenizer(config)
     tokenizer_result = rvq_teacher(audio)
-    assert rvq_teacher.encoder.in_features == 2 * config.n_mels * config.temporal_fold
-    assert rvq_teacher.encoder.out_features == config.acoustic_rvq_dim
-    assert rvq_teacher.decoder.in_features == config.acoustic_rvq_dim
-    assert tokenizer_result.quantized.shape[-1] == config.acoustic_rvq_dim
+    frontend_dim = 2 * config.n_mels * config.temporal_fold
+    # Mel features are quantized directly; the bottleneck is inside the RVQ.
+    assert rvq_teacher.rvq.input_dim == frontend_dim
+    assert rvq_teacher.rvq.codebook_dim == config.acoustic_codebook_dim
+    # There is no decoder: the summed codes are the reconstruction.
+    assert not hasattr(rvq_teacher, "decoder")
+    assert tokenizer_result.quantized.shape[-1] == frontend_dim
     assert tokenizer_result.reconstruction_loss is not None
     assert torch.isfinite(tokenizer_result.reconstruction_loss)
     acoustic_targets_from_rvq = rvq_teacher.encode(audio)
