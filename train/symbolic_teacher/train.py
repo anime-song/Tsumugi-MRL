@@ -320,6 +320,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Recount train labels even when a cached loss-statistics file exists.",
     )
+    parser.add_argument(
+        "--musical-codebooks",
+        type=int,
+        default=8,
+        help="Residual stages in the symbolic RVQ; each stage adds about 9 bits per frame.",
+    )
+    parser.add_argument("--musical-codebook-dim", type=int, default=16)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--prefetch-factor", type=int, default=4)
     parser.add_argument(
@@ -486,6 +493,8 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError("crop_frames must be non-negative")
     if args.prefetch_factor <= 0:
         raise ValueError("prefetch-factor must be positive.")
+    if args.musical_codebooks <= 0 or args.musical_codebook_dim <= 0:
+        raise ValueError("musical-codebooks and musical-codebook-dim must be positive.")
     if args.log_interval <= 0:
         raise ValueError("log-interval must be positive")
     if args.beat_pos_weight <= 0 or args.downbeat_pos_weight <= 0:
@@ -497,7 +506,11 @@ def train(args: argparse.Namespace) -> None:
     if not 0 <= args.val_ratio < 1:
         raise ValueError("val-ratio must be in [0, 1).")
     torch.manual_seed(args.seed)
-    config = TrainingConfig(gradient_checkpointing=args.gradient_checkpointing)
+    config = TrainingConfig(
+        gradient_checkpointing=args.gradient_checkpointing,
+        musical_codebooks=args.musical_codebooks,
+        musical_codebook_dim=args.musical_codebook_dim,
+    )
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     dataset = _build_dataset(args, config)
     train_dataset, val_dataset = _split_dataset(dataset, args.val_ratio, args.seed)
@@ -605,6 +618,7 @@ def train(args: argparse.Namespace) -> None:
                 "num_workers": args.num_workers,
                 "prefetch_factor": args.prefetch_factor,
                 "length_buckets": args.length_buckets,
+                "musical_codebook_dim": config.musical_codebook_dim,
                 "device": str(device),
                 "amp": use_amp,
                 "amp_dtype": str(amp_dtype),

@@ -20,8 +20,9 @@ class TrainingConfig(MelRVQConfig):
     codebook sizes are configured independently for each teacher.
     """
 
-    musical_codebooks: int = 4
+    musical_codebooks: int = 8
     musical_vocab_size: int = 512
+    musical_codebook_dim: int = 16
 
     # The event vocabulary is deliberately fixed and small.  It contains
     # pitch on/off, beat, downbeat, chord, bass, key, meter, instrument,

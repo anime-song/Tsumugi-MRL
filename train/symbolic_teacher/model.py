@@ -204,6 +204,8 @@ class SymbolicTeacher(nn.Module, PyTorchModelHubMixin):
             num_codebooks=config.musical_codebooks,
             codebook_size=config.musical_vocab_size,
             commitment_weight=config.rvq_commitment_weight,
+            codebook_dim=config.musical_codebook_dim,
+            stale_tolerance=config.rvq_stale_tolerance,
         )
         self.decoder = SymbolicFrameDecoder(config)
         self._frozen = False
