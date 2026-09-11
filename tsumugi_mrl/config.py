@@ -13,6 +13,11 @@ class ModelConfig:
     temporal_fold: int = 2
     max_audio_seconds: float = 30.0
     conv_channels: int = 512
+    conv_kernel_size: int = 31
+    # MuQ's encoder is 1024 wide over 12 layers, which needs about 20 GB at
+    # batch 16 and 30 s crops. On a 12 GB card that does not fail outright:
+    # the driver spills to system memory and the step slows by more than an
+    # order of magnitude, so the width stays where it fits.
     d_model: int = 512
     n_heads: int = 8
     num_layers: int = 8
@@ -36,6 +41,8 @@ class ModelConfig:
             raise ValueError("RoPE requires an even attention head dimension.")
         if self.dim_feedforward % self.d_model:
             raise ValueError("dim_feedforward must be a multiple of d_model.")
+        if self.conv_kernel_size <= 0 or self.conv_kernel_size % 2 == 0:
+            raise ValueError("conv_kernel_size must be odd so the Conformer convolution keeps the length.")
 
     @property
     def input_frame_rate(self) -> float:

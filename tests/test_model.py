@@ -5,6 +5,7 @@ from train.losses import PretrainingLoss
 from train.mel_rvq.model import MelRVQTokenizer
 from train.pretraining import TsumugiMRLPretrainingModel as TsumugiMRLModel
 from train.rvq import ResidualVectorQuantizer
+from tsumugi_mrl.conformer import Conformer, ConformerConvolution
 from tsumugi_mrl.model import MaskedAudioEncoder, StereoMelFrontend
 
 
@@ -509,4 +510,70 @@ def test_mask_token_is_a_trained_mel_column():
     assert encoder.mask_token.shape == (config.audio_channels, config.n_mels)
     assert encoder.mask_token.grad is not None
     assert encoder.mask_token.grad.abs().sum() > 0
+
+
+def test_audio_encoder_dimensions_fit_the_available_memory():
+    config = ModelConfig()
+
+    # MuQ trains 1024 wide over 12 layers. That needs roughly 20 GB at batch 16
+    # and 30 s crops, which a 12 GB card serves by spilling to system memory
+    # rather than failing, so the encoder stays at a width that fits.
+    assert (config.d_model, config.n_heads, config.num_layers) == (512, 8, 8)
+    assert config.dim_feedforward == 4 * config.d_model
+    assert config.conv_kernel_size == 31
+
+
+def test_conformer_convolution_sees_only_nearby_frames():
+    torch.manual_seed(0)
+    convolution = ConformerConvolution(dim=8, kernel_size=5, dropout=0.0).eval()
+    x = torch.randn(1, 20, 8)
+    bumped = x.clone()
+    # A constant offset would survive nothing: the layer norm in front of the
+    # convolution subtracts the mean of each frame.
+    bumped[:, 10] = torch.randn(8) * 3.0
+
+    with torch.no_grad():
+        moved = (convolution(bumped) - convolution(x)).abs().sum(-1) > 1e-6
+
+    # This local view is the reason the block exists: attention alone has no
+    # notion of adjacency. A kernel of five reaches two frames either side.
+    assert moved[0, 8:13].all()
+    assert not moved[0, :8].any()
+    assert not moved[0, 13:].any()
+
+
+def test_conformer_ignores_padding():
+    torch.manual_seed(0)
+    conformer = Conformer(
+        input_dim=16, num_heads=4, num_layers=2, ffn_hidden_size_factor=2, conv_kernel_size=5, dropout=0.0
+    ).eval()
+    valid = torch.randn(1, 9, 16)
+    padded = torch.cat([valid, torch.randn(1, 5, 16)], dim=1)
+    attention_mask = torch.zeros(1, 14, dtype=torch.bool)
+    attention_mask[:, :9] = True
+
+    with torch.no_grad():
+        expected = conformer(valid)
+        actual = conformer(padded, attention_mask=attention_mask)
+
+    # Attention masks its keys, but the convolution would otherwise pull the
+    # padded frames into their neighbours, so it zeroes them in every block.
+    assert torch.allclose(expected, actual[:, :9], atol=1e-5)
+
+
+def test_conformer_block_trains_every_path():
+    config = _subsampling_config()
+    encoder = MaskedAudioEncoder(config).train()
+    audio = torch.randn(2, 2, 8_820)
+
+    encoder(audio).square().mean().backward()
+
+    block = encoder.encoder.layers[0]
+    for name, module in (
+        ("ffn1", block.ffn1.net[0]),
+        ("attention", block.attention.to_q),
+        ("convolution", block.convolution.depthwise),
+        ("ffn2", block.ffn2.net[0]),
+    ):
+        assert module.weight.grad is not None and module.weight.grad.abs().sum() > 0, name
 

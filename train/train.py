@@ -27,7 +27,7 @@ def _loss_metric_name(name: str) -> str:
 
 
 def compile_audio_encoder(model: TsumugiMRLPretrainingModel) -> None:
-    """Compile only the Transformer inside MaskedAudioEncoder."""
+    """Compile only the Conformer inside MaskedAudioEncoder."""
 
     model.audio_encoder.encoder.forward = torch.compile(
         model.audio_encoder.encoder.forward,

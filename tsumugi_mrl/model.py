@@ -9,8 +9,8 @@ from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint
 
+from .conformer import Conformer
 from .config import ModelConfig
-from .transformer import Transformer
 
 
 def _checkpoint(function: Callable[[Tensor], Tensor], x: Tensor, *, enabled: bool) -> Tensor:
@@ -203,7 +203,7 @@ class MaskedAudioEncoder(nn.Module):
     """MuQ-style masked audio encoder for stereo 22.05 kHz audio.
 
     The frontend creates a 50 Hz Mel spectrogram, the convolutional
-    subsampling turns it into 25 Hz tokens, and the Transformer maps those to
+    subsampling turns it into 25 Hz tokens, and the Conformer maps those to
     shared hidden states ``[B, T_a, D_a]``.
     """
 
@@ -224,14 +224,13 @@ class MaskedAudioEncoder(nn.Module):
         # neighbours, so what the model is asked to predict would be part of
         # its own input.
         self.mask_token = nn.Parameter(torch.zeros(config.audio_channels, config.n_mels))
-        self.encoder = Transformer(
+        self.encoder = Conformer(
             input_dim=config.d_model,
-            head_dim=config.d_model // config.n_heads,
             num_heads=config.n_heads,
             num_layers=config.num_layers,
             ffn_hidden_size_factor=config.dim_feedforward // config.d_model,
+            conv_kernel_size=config.conv_kernel_size,
             dropout=config.dropout,
-            output_norm=True,
         )
 
     def set_mel_stats(self, mean: float, std: float) -> None:
@@ -283,7 +282,7 @@ class MaskedAudioEncoder(nn.Module):
         def encode(hidden: Tensor) -> Tensor:
             return self.encoder(hidden, attention_mask=attention_mask)
 
-        # Custom RoPE Transformer: [B, T_a, D_a] -> [B, T_a, D_a].
+        # Conformer: [B, T_a, D_a] -> [B, T_a, D_a].
         x = _checkpoint(encode, x, enabled=use_checkpoint)
         if padding_mask is not None:
             # Keep padded rows from entering pooling or contrastive learning.
