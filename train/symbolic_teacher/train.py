@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import asdict
 from pathlib import Path
 
 import torch
 from torch import Tensor
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Sampler, Subset
 
 from train.config import TrainingConfig
 from train.losses import SymbolicTeacherLoss
@@ -320,6 +321,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Recount train labels even when a cached loss-statistics file exists.",
     )
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--prefetch-factor", type=int, default=4)
+    parser.add_argument(
+        "--length-buckets",
+        action="store_true",
+        help="Batch items of similar length together to cut padding in the event attention.",
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument(
         "--amp-dtype",
@@ -348,6 +355,99 @@ def build_parser() -> argparse.ArgumentParser:
         help="Trade extra Transformer recomputation for lower activation memory.",
     )
     return parser
+
+
+class LengthBucketSampler(Sampler[list[int]]):
+    """Group items of similar length into batches.
+
+    Event sequences vary from a few hundred to a few thousand tokens, and
+    ``collate_symbolic_sequences`` pads every batch to its longest member. With
+    random batches roughly a fifth of the quadratic attention work is spent on
+    padding. Sorting by length first removes almost all of it; the batches
+    themselves are still shuffled, so the model does not see them in a fixed
+    order.
+    """
+
+    def __init__(
+        self,
+        lengths: list[int],
+        batch_size: int,
+        shuffle: bool = True,
+        drop_last: bool = False,
+        seed: int = 0,
+    ) -> None:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+        self.lengths = lengths
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.drop_last = drop_last
+        self.seed = seed
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        """Reshuffle for the given epoch, as a distributed sampler would."""
+
+        self.epoch = epoch
+
+    def _batches(self) -> list[list[int]]:
+        generator = torch.Generator().manual_seed(self.seed + self.epoch)
+        order = torch.argsort(
+            torch.tensor(self.lengths, dtype=torch.long)
+            # Break ties randomly so equal-length items are not always paired.
+            + torch.randint(0, 2, (len(self.lengths),), generator=generator)
+        ).tolist()
+        batches = [order[start : start + self.batch_size] for start in range(0, len(order), self.batch_size)]
+        if self.drop_last and batches and len(batches[-1]) < self.batch_size:
+            batches.pop()
+        if self.shuffle:
+            batches = [batches[index] for index in torch.randperm(len(batches), generator=generator).tolist()]
+        return batches
+
+    def __iter__(self):
+        yield from self._batches()
+
+    def __len__(self) -> int:
+        count = len(self.lengths) // self.batch_size
+        return count if self.drop_last else (len(self.lengths) + self.batch_size - 1) // self.batch_size
+
+
+def _token_count(samples) -> int:
+    """Collate one item into its token count.
+
+    A module-level function rather than a lambda: DataLoader workers are
+    spawned on Windows and have to pickle whatever they are given.
+    """
+
+    return int(samples[0].token_ids.numel())
+
+
+def _sequence_lengths(dataset, num_workers: int, cache_path: Path, crop_frames: int | None) -> list[int]:
+    """Token counts per item, cached on disk.
+
+    The crop is random, so a length is an estimate of what an epoch will see
+    rather than an exact count. That is enough to keep similar items together.
+    """
+
+    if cache_path.exists():
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        if payload.get("items") == len(dataset) and payload.get("crop_frames") == crop_frames:
+            return payload["lengths"]
+
+    loader = DataLoader(
+        dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=_token_count,
+    )
+    lengths = list(loader)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps({"items": len(dataset), "crop_frames": crop_frames, "lengths": lengths}),
+        encoding="utf-8",
+    )
+    return lengths
 
 
 def _build_dataset(args: argparse.Namespace, config: TrainingConfig):
@@ -384,6 +484,8 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError("epochs and batch_size must be positive")
     if args.crop_frames < 0:
         raise ValueError("crop_frames must be non-negative")
+    if args.prefetch_factor <= 0:
+        raise ValueError("prefetch-factor must be positive.")
     if args.log_interval <= 0:
         raise ValueError("log-interval must be positive")
     if args.beat_pos_weight <= 0 or args.downbeat_pos_weight <= 0:
@@ -415,22 +517,31 @@ def train(args: argparse.Namespace) -> None:
         downbeat_pos_weight=args.downbeat_pos_weight,
         max_note_pos_weight=args.max_note_pos_weight,
     )
-    loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        collate_fn=collate_symbolic_sequences,
-    )
+    loader_options = {
+        "num_workers": args.num_workers,
+        "collate_fn": collate_symbolic_sequences,
+        "pin_memory": device.type == "cuda",
+    }
+    if args.num_workers > 0:
+        loader_options.update(persistent_workers=True, prefetch_factor=args.prefetch_factor)
+
+    train_sampler = None
+    if args.length_buckets:
+        lengths_path = args.output_dir / "token_lengths.json"
+        lengths = _sequence_lengths(
+            train_dataset,
+            args.num_workers,
+            lengths_path,
+            args.crop_frames if args.crop_frames > 0 else None,
+        )
+        train_sampler = LengthBucketSampler(lengths, args.batch_size, seed=args.seed)
+        print(f"length buckets: {len(train_sampler)} batches from {len(lengths)} items", flush=True)
+        loader = DataLoader(train_dataset, batch_sampler=train_sampler, **loader_options)
+    else:
+        loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, **loader_options)
     val_loader = None
     if val_dataset is not None:
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=args.batch_size,
-            shuffle=False,
-            num_workers=args.num_workers,
-            collate_fn=collate_symbolic_sequences,
-        )
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, **loader_options)
     teacher = SymbolicTeacher(config).to(device)
     if args.compile_encoder:
         # Compile only the event Transformer while preserving checkpoint keys.
@@ -492,6 +603,8 @@ def train(args: argparse.Namespace) -> None:
                 "balanced_softmax_tau": args.balanced_softmax_tau,
                 "loss_stats_path": str(loss_stats_path),
                 "num_workers": args.num_workers,
+                "prefetch_factor": args.prefetch_factor,
+                "length_buckets": args.length_buckets,
                 "device": str(device),
                 "amp": use_amp,
                 "amp_dtype": str(amp_dtype),
@@ -514,6 +627,9 @@ def train(args: argparse.Namespace) -> None:
     global_step = 0
     try:
         for epoch in range(1, args.epochs + 1):
+            if train_sampler is not None:
+                # Re-draw the buckets so batches differ between epochs.
+                train_sampler.set_epoch(epoch)
             teacher.train()
             totals: dict[str, float] = {}
             for step, batch in enumerate(loader, start=1):

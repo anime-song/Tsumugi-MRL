@@ -80,3 +80,34 @@ def test_symbolic_loss_weights_use_sparse_counts_and_amt_defaults():
     assert binary["beat"].item() == 5.0
     assert binary["downbeat"].item() == 20.0
     assert torch.equal(categorical["chord"], statistics["categorical"]["chord"])
+
+
+def test_length_bucket_sampler_groups_similar_lengths():
+    from train.symbolic_teacher.train import LengthBucketSampler
+
+    lengths = [100, 900, 110, 880, 105, 890]
+    sampler = LengthBucketSampler(lengths, batch_size=3, seed=0)
+
+    batches = list(sampler)
+    assert len(sampler) == len(batches) == 2
+    assert sorted(index for batch in batches for index in batch) == list(range(6))
+    # Short items land together and long ones together, whatever the order.
+    grouped = sorted(sorted(lengths[index] for index in batch) for batch in batches)
+    assert grouped == [[100, 105, 110], [880, 890, 900]]
+
+    # A different epoch may reorder the batches but keeps the grouping.
+    sampler.set_epoch(3)
+    regrouped = sorted(sorted(lengths[index] for index in batch) for batch in list(sampler))
+    assert regrouped == grouped
+
+
+def test_length_bucket_sampler_handles_a_partial_batch():
+    from train.symbolic_teacher.train import LengthBucketSampler
+
+    sampler = LengthBucketSampler([10, 20, 30, 40, 50], batch_size=2, seed=1)
+    batches = list(sampler)
+    assert len(sampler) == len(batches) == 3
+    assert sorted(len(batch) for batch in batches) == [1, 2, 2]
+
+    dropped = LengthBucketSampler([10, 20, 30, 40, 50], batch_size=2, seed=1, drop_last=True)
+    assert len(list(dropped)) == len(dropped) == 2
