@@ -65,9 +65,15 @@ from train.mel_rvq.model import MelRVQTokenizer
 teacher = MelRVQTokenizer.from_pretrained("anime-song/tsumugi-mrl-mel-rvq")
 ```
 
-The Hub checkpoint uses eight codebooks with 1,024 entries each and includes
-the Mel normalization statistics used during training. It produces fixed
-acoustic targets for Tsumugi-MRL pretraining; it does not synthesize audio.
+The Hub checkpoint quantizes the folded Mel features directly with eight
+residual stages of 1,024 entries, each projecting through a 16-dimensional
+codebook space, and includes the Mel normalization statistics used during
+training. It produces fixed acoustic targets for Tsumugi-MRL pretraining; it
+does not synthesize audio.
+
+The published weights follow the quantizer layout described above, so load them
+with a matching checkout of this repository. Checkpoints from before that
+change are not compatible.
 
 ## Use the tokenizer
 
