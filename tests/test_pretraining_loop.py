@@ -30,6 +30,7 @@ def training_files(tmp_path):
     config = TrainingConfig(
         n_mels=8,
         n_fft=512,
+        conv_channels=4,
         d_model=16,
         n_heads=2,
         num_layers=1,

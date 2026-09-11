@@ -262,6 +262,7 @@ def test_stereo_forward_and_three_losses():
         n_fft=512,
         hop_length=441,
         max_audio_seconds=2.0,
+        conv_channels=8,
         d_model=64,
         n_heads=4,
         num_layers=2,
@@ -349,6 +350,7 @@ def test_audio_encoder_gradient_checkpointing_backpropagates():
     config = ModelConfig(
         n_mels=8,
         n_fft=512,
+        conv_channels=4,
         d_model=16,
         n_heads=4,
         num_layers=2,
@@ -370,6 +372,7 @@ def test_audio_export_reload_and_downstream_gradients(tmp_path):
     config = ModelConfig(
         n_mels=8,
         n_fft=512,
+        conv_channels=4,
         d_model=32,
         n_heads=4,
         num_layers=1,
