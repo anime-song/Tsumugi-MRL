@@ -488,3 +488,44 @@ def test_instrument_and_meter_tokens_are_only_state_changes(tmp_path):
     meter_events = cropped.token_type_ids == int(SymbolicTokenType.METER)
     assert cropped.position_ids[meter_events].tolist() == [0]
     assert cropped.token_ids[meter_events].tolist() == [METER_TOKEN_BASE + encode_meter(3, 4)]
+
+
+def test_symbolic_rvq_reconstruction_ties_codes_to_frame_states():
+    torch.manual_seed(0)
+    config = _small_config()
+    teacher = SymbolicTeacher(config)
+    output = teacher(
+        torch.tensor([[FRAME_TOKEN_ID, 2, FRAME_TOKEN_ID]]),
+        anchor_positions=torch.tensor([[0, 2]]),
+        token_instrument_ids=torch.tensor([[NO_INSTRUMENT_ID, 21, NO_INSTRUMENT_ID]]),
+        token_type_ids=torch.tensor(
+            [[int(SymbolicTokenType.CONTROL), int(SymbolicTokenType.NOTE), int(SymbolicTokenType.CONTROL)]]
+        ),
+        position_ids=torch.tensor([[0, 0, 1]]),
+    )
+    assert torch.allclose(output.rvq_reconstruction_loss, (output.quantized - output.frame_hidden).abs().mean())
+
+    targets = SymbolicFrameTargets(
+        note_activity=torch.zeros(1, 2, config.symbolic_pitch_classes),
+        note_onset=torch.zeros(1, 2, config.symbolic_pitch_classes),
+        note_offset=torch.zeros(1, 2, config.symbolic_pitch_classes),
+        instrument_activity=torch.zeros(1, 2, config.symbolic_instrument_classes),
+        beat=torch.ones(1, 2),
+        downbeat=torch.zeros(1, 2),
+        chord=torch.zeros(1, 2, dtype=torch.long),
+        bass=torch.zeros(1, 2, dtype=torch.long),
+        key=torch.zeros(1, 2, dtype=torch.long),
+        meter=torch.zeros(1, 2, dtype=torch.long),
+    )
+    unweighted = SymbolicTeacherLoss()(output, targets)
+    weighted = SymbolicTeacherLoss(rvq_reconstruction_weight=2.0)(output, targets)
+    # The distance is reported either way but only counts when weighted.
+    assert torch.equal(unweighted["loss_rvq_reconstruction"], output.rvq_reconstruction_loss)
+    assert torch.allclose(weighted["loss_total"] - unweighted["loss_total"], 2.0 * output.rvq_reconstruction_loss)
+
+    output.rvq_reconstruction_loss.backward()
+    # Without this gradient the output projections are free to drift away
+    # from the states they are meant to rebuild.
+    for projection in teacher.rvq.output_projections:
+        assert projection.parametrizations.weight.original1.grad.abs().sum() > 0
+

@@ -146,11 +146,13 @@ class SymbolicTeacherLoss(nn.Module):
         binary_pos_weights: Optional[dict[str, Tensor]] = None,
         categorical_class_counts: Optional[dict[str, Tensor]] = None,
         balanced_softmax_tau: float = 0.0,
+        rvq_reconstruction_weight: float = 0.0,
     ) -> None:
         super().__init__()
-        if reconstruction_weight < 0 or rvq_weight < 0 or balanced_softmax_tau < 0:
+        if min(reconstruction_weight, rvq_weight, balanced_softmax_tau, rvq_reconstruction_weight) < 0:
             raise ValueError("symbolic teacher loss weights must be non-negative.")
         self.reconstruction_weight = reconstruction_weight
+        self.rvq_reconstruction_weight = rvq_reconstruction_weight
         self.rvq_weight = rvq_weight
         self.binary_pos_weights = binary_pos_weights
         self.categorical_class_counts = categorical_class_counts
@@ -174,9 +176,14 @@ class SymbolicTeacherLoss(nn.Module):
         )
         result["loss_reconstruction"] = result.pop("loss_total")
         result["loss_rvq"] = output.rvq_loss
-        result["loss_total"] = (
-            self.reconstruction_weight * result["loss_reconstruction"] + self.rvq_weight * result["loss_rvq"]
-        )
+        total = self.reconstruction_weight * result["loss_reconstruction"] + self.rvq_weight * result["loss_rvq"]
+        rvq_reconstruction = getattr(output, "rvq_reconstruction_loss", None)
+        if rvq_reconstruction is not None:
+            # Logged even at weight zero, so a run without the term still
+            # reports how far the quantizer output drifts from its input.
+            result["loss_rvq_reconstruction"] = rvq_reconstruction
+            total = total + self.rvq_reconstruction_weight * rvq_reconstruction
+        result["loss_total"] = total
         return result
 
 

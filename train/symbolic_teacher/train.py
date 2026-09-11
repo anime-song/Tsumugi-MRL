@@ -207,6 +207,8 @@ def _evaluate(
     binary_counts = {name: [0, 0, 0] for name in ("note_onset", "note_offset", "beat", "downbeat")}
     categorical_counts: dict[str, dict[str, Tensor]] = {}
     rvq_counts: Tensor | None = None
+    # Summed |quantized - hidden| and |hidden| over valid frames.
+    rvq_error = [0.0, 0.0]
     try:
         for batch in loader:
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
@@ -242,6 +244,10 @@ def _evaluate(
                 valid_frame,
             )
 
+            hidden = output.frame_hidden.detach().float()[valid_frame]
+            rvq_error[0] += (output.quantized.detach().float()[valid_frame] - hidden).norm(dim=-1).sum().item()
+            rvq_error[1] += hidden.norm(dim=-1).sum().item()
+
             codes = output.codes.detach()[valid_frame].cpu()
             if rvq_counts is None:
                 rvq_counts = torch.zeros((codes.size(-1), codebook_size), dtype=torch.float64)
@@ -259,6 +265,9 @@ def _evaluate(
         metrics[f"val/{name}_f1"] = _f1_from_counts(true_positive, false_positive, false_negative)
     metrics["val/chord_macro_f1"] = _macro_f1_from_counts(categorical_counts["chord"])
     metrics["val/rvq_perplexity"] = _perplexity_from_counts(rvq_counts) if rvq_counts is not None else 0.0
+    # Below 1 the quantizer output is closer to the frame states than zero is;
+    # above 1 the codes have drifted away from what they are meant to encode.
+    metrics["val/rvq_relative_error"] = rvq_error[0] / max(rvq_error[1], 1e-12)
     return metrics
 
 
@@ -302,6 +311,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=10.0,
         help="Upper bound for the data-derived note onset/offset positive weights.",
+    )
+    parser.add_argument(
+        "--rvq-reconstruction-weight",
+        type=float,
+        default=1.0,
+        help="Weight of the L1 distance between the symbolic RVQ output and the frame states; 0 disables it.",
     )
     parser.add_argument(
         "--balanced-softmax-tau",
@@ -499,6 +514,8 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError("log-interval must be positive")
     if args.beat_pos_weight <= 0 or args.downbeat_pos_weight <= 0:
         raise ValueError("beat and downbeat positive weights must be positive")
+    if args.rvq_reconstruction_weight < 0:
+        raise ValueError("rvq-reconstruction-weight must be non-negative.")
     if args.max_note_pos_weight < 1:
         raise ValueError("max-note-pos-weight must be at least 1")
     if args.balanced_softmax_tau < 0:
@@ -567,6 +584,7 @@ def train(args: argparse.Namespace) -> None:
         binary_pos_weights=binary_pos_weights,
         categorical_class_counts=categorical_class_counts,
         balanced_softmax_tau=args.balanced_softmax_tau,
+        rvq_reconstruction_weight=args.rvq_reconstruction_weight,
     )
     optimizer = torch.optim.AdamW(teacher.parameters(), lr=args.lr)
     use_amp = device.type == "cuda"
@@ -611,6 +629,7 @@ def train(args: argparse.Namespace) -> None:
                 "beat_pos_weight": args.beat_pos_weight,
                 "downbeat_pos_weight": args.downbeat_pos_weight,
                 "max_note_pos_weight": args.max_note_pos_weight,
+                "rvq_reconstruction_weight": args.rvq_reconstruction_weight,
                 "note_onset_pos_weight_mean": float(binary_pos_weights["note_onset"].mean().item()),
                 "note_offset_pos_weight_mean": float(binary_pos_weights["note_offset"].mean().item()),
                 "balanced_softmax_tau": args.balanced_softmax_tau,
@@ -636,6 +655,7 @@ def train(args: argparse.Namespace) -> None:
         f"offset_pos_weight={binary_pos_weights['note_offset'].mean().item():.2f} "
         f"beat_pos_weight={args.beat_pos_weight:.2f} downbeat_pos_weight={args.downbeat_pos_weight:.2f} "
         f"max_note_pos_weight={args.max_note_pos_weight:.2f} "
+        f"rvq_reconstruction_weight={args.rvq_reconstruction_weight:.2f} "
         f"balanced_softmax_tau={args.balanced_softmax_tau:.2f}"
     )
     global_step = 0

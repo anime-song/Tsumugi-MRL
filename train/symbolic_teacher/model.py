@@ -184,6 +184,7 @@ class SymbolicTeacherOutput:
     rvq_loss: Tensor  # scalar
     reconstruction: dict[str, Tensor]  # frame-wise outputs, keyed by task
     embedding: Tensor  # [B, D_p]
+    rvq_reconstruction_loss: Optional[Tensor] = None  # scalar, L1(quantized, frame_hidden)
 
 
 class SymbolicTeacher(nn.Module, PyTorchModelHubMixin):
@@ -249,6 +250,19 @@ class SymbolicTeacher(nn.Module, PyTorchModelHubMixin):
         # integer codes [B, T_s, N_musical].  valid_frame is [B, T_s].
         valid_frame = None if frame_padding_mask is None else ~frame_padding_mask.bool()
         rvq = self.rvq(frame_hidden, valid_mask=valid_frame)
+        # The codes only carry what the encoder knows if the quantizer output
+        # stays close to the states it quantizes, and nothing else ties the two
+        # together. Without this term each stage of a trained teacher left a
+        # residual larger than the hidden state itself: a probe read onsets at
+        # 0.91 F1 from frame_hidden but 0.63 from the quantized output. The
+        # target is detached so the encoder cannot shrink the loss by producing
+        # states that are easy to quantize but say less about the music.
+        error = (rvq.quantized - frame_hidden.detach().float()).abs().mean(dim=-1)
+        if valid_frame is None:
+            rvq_reconstruction_loss = error.mean()
+        else:
+            weight = valid_frame.to(dtype=error.dtype)
+            rvq_reconstruction_loss = (error * weight).sum() / weight.sum().clamp_min(1.0)
         quantized = rvq.quantized
         if frame_padding_mask is not None:
             # Remove padded FRAME rows before creating the clip embedding.
@@ -269,6 +283,7 @@ class SymbolicTeacher(nn.Module, PyTorchModelHubMixin):
             rvq_loss=rvq.loss,
             reconstruction=self.decoder(quantized),
             embedding=embedding,
+            rvq_reconstruction_loss=rvq_reconstruction_loss,
         )
 
     @torch.no_grad()
