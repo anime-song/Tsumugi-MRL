@@ -97,6 +97,22 @@ def test_rvq_projects_each_stage_into_a_codebook_bottleneck():
     assert rvq.decode(result.codes).shape == x.shape
 
 
+def test_rvq_reconstruction_reaches_the_projections():
+    # The per-stage straight-through is the only one: a reconstruction loss
+    # taken on the quantizer output must train the projections even when the
+    # input is plain data with no upstream encoder.
+    rvq = ResidualVectorQuantizer(input_dim=4, num_codebooks=2, codebook_size=8, codebook_dim=2)
+    x = torch.randn(2, 5, 4)
+    result = rvq(x)
+
+    reconstruction = (result.quantized - x).abs().mean()
+    assert reconstruction.requires_grad
+    reconstruction.backward()
+    for stage in range(2):
+        assert rvq.input_projections[stage].parametrizations.weight.original1.grad is not None
+        assert rvq.output_projections[stage].parametrizations.weight.original1.grad is not None
+
+
 def test_rvq_sums_stage_losses():
     rvq = ResidualVectorQuantizer(
         input_dim=2,

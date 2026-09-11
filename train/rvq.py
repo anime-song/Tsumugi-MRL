@@ -141,11 +141,13 @@ class ResidualVectorQuantizer(nn.Module):
         commitment_loss = torch.stack(commitment_losses).sum()
         loss = codebook_loss + self.commitment_weight * commitment_loss
 
-        # Forward values are quantized, while the gradient to an upstream
-        # encoder follows the identity path.
-        quantized_st = x + (quantized - x).detach()
+        # Each stage already carries its own straight-through estimator, so the
+        # summed output stays differentiable with respect to the projections
+        # and any upstream encoder. Wrapping the sum in a second estimator
+        # against ``x`` would detach the whole quantizer from a reconstruction
+        # loss computed on this output.
         return RVQOutput(
-            quantized=quantized_st,
+            quantized=quantized,
             codes=code_tensor,
             codebook_loss=codebook_loss,
             commitment_loss=commitment_loss,
