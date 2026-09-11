@@ -65,9 +65,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mask-ratio", type=float, default=0.5)
     parser.add_argument("--mask-span", type=int, default=10)
 
-    # Optimization and runtime settings.
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--grad-clip", type=float, default=1.0)
+    # Optimization and runtime settings. The defaults follow MuQ's fairseq
+    # pretraining recipe (Adam 5e-4, betas 0.9/0.98, eps 1e-6, weight decay
+    # 0.01, clip 10, linear warmup into a polynomial decay).
+    parser.add_argument("--lr", type=float, default=5e-4, help="Peak learning rate reached at the end of warmup.")
+    parser.add_argument("--grad-clip", type=float, default=10.0)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--adam-betas", type=float, nargs=2, default=(0.9, 0.98), metavar=("BETA1", "BETA2"))
+    parser.add_argument("--adam-eps", type=float, default=1e-6)
+    parser.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=0.08,
+        help=(
+            "Warmup length as a fraction of the whole run. MuQ warms up for 32,000 of its "
+            "400,000 updates; a fraction transfers that shape to a run of any length."
+        ),
+    )
+    parser.add_argument(
+        "--warmup-steps",
+        type=int,
+        default=0,
+        help="Absolute warmup length in updates; overrides --warmup-ratio when positive.",
+    )
+    parser.add_argument(
+        "--decay-steps",
+        type=int,
+        default=0,
+        help="Updates the decay spans; defaults to the whole requested run (epochs x batches).",
+    )
+    parser.add_argument("--lr-end", type=float, default=0.0, help="Learning rate the decay ends at.")
+    parser.add_argument("--lr-power", type=float, default=1.0, help="Decay exponent; 1.0 decays linearly.")
     parser.add_argument(
         "--num-workers",
         type=int,
@@ -100,6 +128,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-interval", type=int, default=10)
     return parser
+
+
+def polynomial_decay_lr(
+    update: int,
+    base_lr: float,
+    warmup_steps: int,
+    total_steps: int,
+    end_lr: float = 0.0,
+    power: float = 1.0,
+) -> float:
+    """Return the learning rate for a one-based update number.
+
+    This reproduces fairseq's ``polynomial_decay`` schedule, which is what MuQ
+    pretrains with: the rate rises linearly from zero to ``base_lr`` over the
+    warmup, then falls to ``end_lr`` over the remaining updates. A masked
+    prediction loss is unstable while the encoder still produces noise, so the
+    warmup matters more here than the exact shape of the decay.
+    """
+
+    if warmup_steps > 0 and update <= warmup_steps:
+        return base_lr * update / warmup_steps
+    if update >= total_steps:
+        return end_lr
+    remaining = 1 - (update - warmup_steps) / max(total_steps - warmup_steps, 1)
+    return (base_lr - end_lr) * remaining**power + end_lr
 
 
 def make_span_mask(padding_mask: Tensor, ratio: float, span: int) -> Tensor:
@@ -253,6 +306,12 @@ def train(args: argparse.Namespace) -> None:
         raise ValueError("lr, grad-clip, and log-interval must be positive; num-workers must be non-negative.")
     if args.prefetch_factor <= 0:
         raise ValueError("prefetch-factor must be positive.")
+    if args.weight_decay < 0 or args.adam_eps <= 0 or not all(0 <= beta < 1 for beta in args.adam_betas):
+        raise ValueError("weight-decay must be non-negative, adam-eps positive, and adam-betas in [0, 1).")
+    if not 0 <= args.warmup_ratio < 1 or args.warmup_steps < 0 or args.decay_steps < 0:
+        raise ValueError("warmup-ratio must be in [0, 1) and warmup/decay-steps non-negative.")
+    if args.lr_end < 0 or args.lr_end > args.lr or args.lr_power <= 0:
+        raise ValueError("lr-end must be between zero and --lr, and lr-power must be positive.")
     if args.save_interval <= 0:
         raise ValueError("save-interval must be positive.")
     if not 0 < args.mask_ratio < 1 or args.mask_span <= 0:
@@ -320,7 +379,15 @@ def train(args: argparse.Namespace) -> None:
         scaler.load_state_dict(restored["amp_scaler"])
 
     # Create the optimizer, loss function, and paired audio/MIDI data loader.
-    optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=args.lr)
+    # fairseq's "adam" decays the weights separately from the gradient, so
+    # torch's AdamW is what reproduces MuQ's optimizer rather than torch's Adam.
+    optimizer = torch.optim.AdamW(
+        (p for p in model.parameters() if p.requires_grad),
+        lr=args.lr,
+        betas=tuple(args.adam_betas),
+        eps=args.adam_eps,
+        weight_decay=args.weight_decay,
+    )
     criterion = PretrainingLoss(temperature=model.config.contrastive_temperature)
     dataset = PairedAudioDataset(args.manifest, model.config, args.crop_frames)
     cache_mode = "mel_features" if dataset.pairs[0].mel_path is not None else "waveform"
@@ -348,6 +415,17 @@ def train(args: argparse.Namespace) -> None:
             torch.cuda.set_rng_state_all(restored["cuda_rng_state"])
     if args.epochs <= start_epoch:
         raise ValueError("--epochs must exceed the number of completed epochs.")
+
+    # By default the decay spans the whole requested run, so extending --epochs
+    # on a resume stretches the schedule instead of leaving the rate at
+    # --lr-end; --decay-steps pins it when a run should keep its original
+    # horizon. The warmup is resolved to updates once and then carried in the
+    # checkpoint, since a run that is extended has already finished warming up.
+    total_steps = args.decay_steps or args.epochs * len(loader)
+    if args.warmup_steps <= 0:
+        args.warmup_steps = round(total_steps * args.warmup_ratio)
+    if args.warmup_steps >= total_steps:
+        raise ValueError("The warmup covers the whole run; lower --warmup-steps or --warmup-ratio.")
 
     # Prepare the checkpoint directory and report the data-loading setup.
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -379,6 +457,13 @@ def train(args: argparse.Namespace) -> None:
                 "mask_span": args.mask_span,
                 "learning_rate": args.lr,
                 "grad_clip": args.grad_clip,
+                "weight_decay": args.weight_decay,
+                "adam_betas": tuple(args.adam_betas),
+                "adam_eps": args.adam_eps,
+                "warmup_steps": args.warmup_steps,
+                "total_steps": total_steps,
+                "lr_end": args.lr_end,
+                "lr_power": args.lr_power,
                 "num_workers": args.num_workers,
                 "prefetch_factor": args.prefetch_factor,
                 "save_interval": args.save_interval,
@@ -393,7 +478,9 @@ def train(args: argparse.Namespace) -> None:
     print(
         f"pairs={len(dataset)} batches={len(loader)} device={device} "
         f"amp={use_amp} amp_dtype={amp_dtype} compile_encoder={args.compile_encoder} "
-        f"num_workers={args.num_workers} prefetch_factor={args.prefetch_factor} cache={cache_mode}",
+        f"num_workers={args.num_workers} prefetch_factor={args.prefetch_factor} cache={cache_mode}\n"
+        f"lr={args.lr} warmup={args.warmup_steps}/{total_steps} updates "
+        f"({args.warmup_steps / total_steps:.1%}) weight_decay={args.weight_decay} clip={args.grad_clip}",
         flush=True,
     )
 
@@ -407,6 +494,20 @@ def train(args: argparse.Namespace) -> None:
                 batch = {key: value.to(device, non_blocking=device.type == "cuda") for key, value in batch.items()}
 
                 # Compute the masked objectives and update trainable parameters.
+                # The rate is derived from the update counter rather than held
+                # in a scheduler object, so a resume picks the schedule back up
+                # from the restored step without extra state. fairseq updates
+                # the rate after each step, so an update sees the rate computed
+                # from the updates that came before it.
+                for group in optimizer.param_groups:
+                    group["lr"] = polynomial_decay_lr(
+                        max(step, 1),
+                        args.lr,
+                        args.warmup_steps,
+                        total_steps,
+                        args.lr_end,
+                        args.lr_power,
+                    )
                 optimizer.zero_grad(set_to_none=True)
                 with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
                     losses = pretraining_losses(
@@ -478,6 +579,12 @@ def train(args: argparse.Namespace) -> None:
                         "mask_span",
                         "lr",
                         "grad_clip",
+                        "weight_decay",
+                        "adam_betas",
+                        "adam_eps",
+                        "warmup_steps",
+                        "lr_end",
+                        "lr_power",
                         "num_workers",
                         "prefetch_factor",
                         "ablation",

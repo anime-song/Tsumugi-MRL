@@ -14,7 +14,14 @@ from train.mel_rvq.model import MelRVQTokenizer
 from train.symbolic import MIDIEventTokenizer, load_pretraining_cache, save_pretraining_cache
 from train.symbolic_teacher.model import SymbolicTeacher
 from train.symbolic_teacher.prepare_dataset import _save_token_cache
-from train.train import build_parser, load_teachers, make_span_mask, pretraining_losses, train
+from train.train import (
+    build_parser,
+    load_teachers,
+    make_span_mask,
+    polynomial_decay_lr,
+    pretraining_losses,
+    train,
+)
 from tsumugi_mrl import TsumugiMRLModel
 
 
@@ -251,6 +258,10 @@ def test_training_resume_matches_uninterrupted_run_and_exports(training_files, t
             "20",
             "--device",
             "cpu",
+            # Both legs must share the schedule horizon: the rate at a given
+            # update depends on how long the run was declared to be.
+            "--decay-steps",
+            "2",
         ]
         arguments += (
             ["--resume", str(resume)]
@@ -306,3 +317,41 @@ def test_save_interval_thins_numbered_checkpoints(training_files, tmp_path):
     # resume checkpoint is written after every epoch either way.
     assert sorted(path.name for path in output.glob("epoch_*.pt")) == ["epoch_0002.pt", "epoch_0003.pt"]
     assert torch.load(output / "last.pt", map_location="cpu")["epoch"] == 3
+
+
+def test_pretraining_defaults_follow_the_muq_recipe():
+    args = build_parser().parse_args(["--manifest", "m.json"])
+
+    assert args.lr == 5e-4
+    assert tuple(args.adam_betas) == (0.9, 0.98)
+    assert args.adam_eps == 1e-6
+    assert args.weight_decay == 0.01
+    assert args.grad_clip == 10.0
+    # MuQ warms up for 32,000 of its 400,000 updates.
+    assert args.warmup_ratio == 32_000 / 400_000
+    assert (args.warmup_steps, args.decay_steps, args.lr_end, args.lr_power) == (0, 0, 0.0, 1.0)
+
+
+def test_polynomial_decay_warms_up_then_decays_linearly():
+    schedule = lambda update, **kwargs: polynomial_decay_lr(update, 5e-4, 32_000, 400_000, **kwargs)
+
+    # The warmup is a straight line from one step's worth of rate up to the peak.
+    assert schedule(1) == pytest.approx(5e-4 / 32_000)
+    assert schedule(16_000) == pytest.approx(2.5e-4)
+    assert schedule(32_000) == pytest.approx(5e-4)
+
+    # The decay spends half the remaining updates reaching half the rate, and
+    # holds at the floor once the declared run is over.
+    assert schedule(216_000) == pytest.approx(2.5e-4)
+    assert schedule(400_000) == 0.0
+    assert schedule(500_000) == 0.0
+
+    assert schedule(216_000, end_lr=1e-4) == pytest.approx(3e-4)
+    # A higher power leaves the peak faster; both still meet at the ends.
+    assert schedule(216_000, power=2.0) < schedule(216_000)
+    assert schedule(32_000, power=2.0) == pytest.approx(5e-4)
+
+
+def test_polynomial_decay_without_warmup_starts_at_the_peak():
+    assert polynomial_decay_lr(1, 1e-3, 0, 10) == pytest.approx(9e-4)
+    assert polynomial_decay_lr(5, 1e-3, 0, 10) == pytest.approx(5e-4)
