@@ -57,17 +57,24 @@ teacher.
 
 ## Audio pretraining
 
-Train with the preparation manifest and both teacher checkpoints. The default
+Train with the preparation manifest. Both teachers default to their published
+releases, so a fresh checkout needs no local teacher checkpoints. The default
 `contrastive` mode uses all three objectives:
 
 ```powershell
 uv run --extra train python -m train.train `
   --manifest datasets/symbolic/manifest.json `
-  --mel-checkpoint checkpoints/mel_rvq/last.pt `
-  --symbolic-checkpoint checkpoints/symbolic_teacher_weighted/last.pt `
   --output-dir checkpoints/pretraining `
   --batch-size 16 --epochs 10 --num-workers 4 --ablation contrastive
 ```
+
+The teachers are downloaded from
+[`anime-song/tsumugi-mrl-mel-rvq`](https://huggingface.co/anime-song/tsumugi-mrl-mel-rvq)
+and
+[`anime-song/tsumugi-mrl-symbolic-teacher`](https://huggingface.co/anime-song/tsumugi-mrl-symbolic-teacher).
+To use teachers you trained yourself, point `--mel-checkpoint` and
+`--symbolic-checkpoint` at a training `.pt`, an export directory, or another Hub
+repository id.
 
 Use `--ablation` to select the cumulative objective set:
 
@@ -108,8 +115,7 @@ For repeated long runs, build the disk-backed audio and symbolic caches once:
 
 ```powershell
 uv run --extra train python scripts/prepare_pretraining_cache.py `
-  --manifest datasets/symbolic/manifest.json `
-  --mel-checkpoint checkpoints/mel_rvq/last.pt
+  --manifest datasets/symbolic/manifest.json
 ```
 
 Then pass `datasets/symbolic/pretraining_cache/manifest.json` to

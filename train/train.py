@@ -11,10 +11,12 @@ from torch.utils.data import DataLoader
 
 from train.config import TrainingConfig
 from train.data import PairedAudioDataset, collate_pretraining_windows
+from train.loading import MEL_RVQ_SOURCE, SYMBOLIC_TEACHER_SOURCE, load_teacher
 from train.losses import PretrainingLoss
 from train.mel_rvq.config import MelRVQConfig
 from train.mel_rvq.model import MelRVQTokenizer
 from train.pretraining import TsumugiMRLPretrainingModel
+from train.symbolic_teacher.model import SymbolicTeacher
 
 AUDIO_SETTINGS = {"d_model", "n_heads", "num_layers", "dim_feedforward", "dropout", "gradient_checkpointing"}
 FRONTEND_SETTINGS = {"sample_rate", "audio_channels", "n_mels", "n_fft", "hop_length", "temporal_fold"}
@@ -40,8 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Dataset and teacher checkpoints.
     parser.add_argument("--manifest", type=Path, default=Path("datasets/symbolic/manifest.json"))
-    parser.add_argument("--mel-checkpoint", type=Path)
-    parser.add_argument("--symbolic-checkpoint", type=Path)
+    parser.add_argument(
+        "--mel-checkpoint",
+        help=f"Training .pt, export directory, or Hub id. Defaults to {MEL_RVQ_SOURCE}.",
+    )
+    parser.add_argument(
+        "--symbolic-checkpoint",
+        help=f"Training .pt, export directory, or Hub id. Defaults to {SYMBOLIC_TEACHER_SOURCE}.",
+    )
     parser.add_argument("--config", type=Path, help="JSON audio encoder settings for a new run.")
     parser.add_argument("--resume", type=Path, help="Resume an epoch checkpoint, including both teachers.")
     parser.add_argument(
@@ -181,11 +189,19 @@ def make_span_mask(padding_mask: Tensor, ratio: float, span: int) -> Tensor:
 
 
 def load_teachers(
-    mel_path: Path,
-    symbolic_path: Path | None,
-    audio_settings: dict,
+    mel_path: str | Path | None = None,
+    symbolic_path: str | Path | None = None,
+    audio_settings: dict | None = None,
     use_symbolic: bool = True,
 ):
+    """Build the pretraining model on top of both frozen teachers.
+
+    Either teacher may come from a local training ``.pt``, a ``save_pretrained``
+    directory, or the Hub. ``None`` selects the published release, so a fresh
+    checkout can pretrain without training the teachers first.
+    """
+
+    audio_settings = audio_settings or {}
     # Reject settings that cannot be applied to the audio encoder.
     unknown = audio_settings.keys() - AUDIO_SETTINGS
     if unknown:
@@ -193,16 +209,14 @@ def load_teachers(
 
     # Load the acoustic teacher checkpoint. Mel-only ablations use its config
     # as the base; symbolic ablations additionally restore symbolic settings.
-    mel = MelRVQTokenizer.from_checkpoint(mel_path)
+    mel = load_teacher(MelRVQTokenizer, mel_path, MEL_RVQ_SOURCE)
     symbolic = None
     settings = asdict(mel.config)
     if use_symbolic:
-        if symbolic_path is None:
-            raise ValueError("This ablation requires --symbolic-checkpoint.")
-        symbolic = torch.load(symbolic_path, map_location="cpu")
+        symbolic = load_teacher(SymbolicTeacher, symbolic_path, SYMBOLIC_TEACHER_SOURCE)
         # Start with the symbolic configuration, then restore the Mel frontend
         # and acoustic-head settings from the acoustic teacher.
-        settings = dict(symbolic["config"])
+        settings = asdict(symbolic.config)
     for field in fields(MelRVQConfig):
         if field.name in FRONTEND_SETTINGS or field.name.startswith(("acoustic_", "rvq_")):
             settings[field.name] = getattr(mel.config, field.name)
@@ -219,7 +233,7 @@ def load_teachers(
     # participates in the selected objective set.
     model = TsumugiMRLPretrainingModel(config)
     if symbolic is not None:
-        model.symbolic_teacher.load_state_dict(symbolic["state_dict"])
+        model.symbolic_teacher.load_state_dict(symbolic.state_dict())
     model.set_mel_stats(*mel.mel_stats)
     return model, mel
 

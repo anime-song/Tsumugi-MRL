@@ -9,6 +9,7 @@ import torch
 
 from train.config import TrainingConfig
 from train.data import PairedAudioDataset, collate_pretraining_windows
+from train.loading import load_teacher
 from train.losses import PretrainingLoss
 from train.mel_rvq.model import MelRVQTokenizer
 from train.symbolic import MIDIEventTokenizer, load_pretraining_cache, save_pretraining_cache
@@ -200,6 +201,32 @@ def test_ablation_modes_select_only_requested_losses(training_files):
         )
         assert set(losses) == expected
         assert torch.isfinite(losses["loss_total"])
+
+
+def test_teachers_load_from_export_directories(training_files, tmp_path):
+    """An export directory is the Hub layout, so both loaders must agree."""
+
+    _, _, mel_path, symbolic_path = training_files
+    mel_export = tmp_path / "mel_export"
+    symbolic_export = tmp_path / "symbolic_export"
+    MelRVQTokenizer.from_checkpoint(mel_path).save_pretrained(mel_export)
+    SymbolicTeacher.from_checkpoint(symbolic_path).save_pretrained(symbolic_export)
+
+    from_files, mel_from_files = load_teachers(mel_path, symbolic_path, {})
+    from_exports, mel_from_exports = load_teachers(mel_export, symbolic_export, {})
+
+    assert mel_from_exports.mel_stats == mel_from_files.mel_stats
+    expected = from_files.symbolic_teacher.state_dict()
+    for name, value in from_exports.symbolic_teacher.state_dict().items():
+        assert torch.equal(value, expected[name])
+
+
+def test_missing_teacher_checkpoint_names_the_path(tmp_path):
+    """A typo in a local path must not fall through to a Hub download."""
+
+    absent = tmp_path / "absent.pt"
+    with pytest.raises(FileNotFoundError, match="absent.pt"):
+        load_teacher(MelRVQTokenizer, absent)
 
 
 def test_mel_rvq_ablation_trains_without_symbolic_checkpoint(training_files, tmp_path):

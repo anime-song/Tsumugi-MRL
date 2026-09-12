@@ -15,6 +15,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from train.loading import MEL_RVQ_SOURCE, load_teacher
 from train.mel_rvq.model import MelRVQTokenizer
 from train.symbolic import save_pretraining_cache
 
@@ -22,7 +23,10 @@ from train.symbolic import save_pretraining_cache
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=Path("datasets/symbolic/manifest.json"))
-    parser.add_argument("--mel-checkpoint", type=Path)
+    parser.add_argument(
+        "--mel-checkpoint",
+        help=f"Training .pt, export directory, or Hub id. Defaults to {MEL_RVQ_SOURCE}.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("datasets/symbolic/pretraining_cache"))
     parser.add_argument("--output-manifest", type=Path)
     parser.add_argument("--device", default=None)
@@ -128,11 +132,8 @@ def main() -> None:
     successful = [entry for entry in entries if entry.get("status") != "error"]
     if not successful:
         raise ValueError("Manifest contains no successful entries.")
-    if not args.skip_mel and args.mel_checkpoint is None:
-        raise ValueError("--mel-checkpoint is required unless --skip-mel is set.")
-
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    tokenizer = MelRVQTokenizer.from_checkpoint(args.mel_checkpoint) if not args.skip_mel else None
+    tokenizer = None if args.skip_mel else load_teacher(MelRVQTokenizer, args.mel_checkpoint, MEL_RVQ_SOURCE)
     frontend = tokenizer.frontend.to(device).eval() if tokenizer is not None else None
     dtype = np.float16 if args.dtype == "float16" else np.float32
     output_dir.mkdir(parents=True, exist_ok=True)
