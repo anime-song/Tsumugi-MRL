@@ -1,6 +1,6 @@
 """MIDI teacher and its frame reconstruction heads."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Optional
 
 import torch
@@ -211,6 +211,23 @@ class SymbolicTeacher(nn.Module, PyTorchModelHubMixin):
         self.decoder = SymbolicFrameDecoder(config)
         self._frozen = False
         self._hub_mixin_config = self.config
+
+    @classmethod
+    def from_checkpoint(cls, path) -> "SymbolicTeacher":
+        """Load a training .pt checkpoint written by ``train.symbolic_teacher.train``.
+
+        Checkpoints store the whole :class:`TrainingConfig`, including audio
+        settings this model never reads. Keys the current dataclass no longer
+        declares are dropped so a teacher still loads after the audio side of
+        the configuration changes.
+        """
+
+        checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        known = {field.name for field in fields(TrainingConfig)}
+        config = TrainingConfig(**{key: value for key, value in checkpoint["config"].items() if key in known})
+        model = cls(config)
+        model.load_state_dict(checkpoint["state_dict"], strict=True)
+        return model.eval()
 
     def forward(
         self,

@@ -59,7 +59,7 @@ file level so validation files are not used for training.
 
 The first run counts sparse and long-tail labels from the training windows and
 caches them as `symbolic_loss_stats.pt`. Note onset/offset use capped positive
-weights (50 by default; try `--max-note-pos-weight 100` for a more aggressive
+weights (10 by default; try `--max-note-pos-weight 50` for a more aggressive
 run), beat/downbeat default to AMT-style weights of 5 and 20, and chord/meter
 use AMT-style balanced-softmax correction with `--balanced-softmax-tau 0.3`.
 Use `--recompute-loss-stats` after changing the training data or split.
@@ -75,6 +75,28 @@ MIDI, replace `--token-dir` with `--midi-dir datasets/symbolic/midi`. Add
 `--compile-mode` to select the `torch.compile` mode. Run with `--help` for all
 options. On Windows with a non-UTF-8 locale, set `PYTHONUTF8=1` before starting
 a compiled run.
+
+## Published checkpoint
+
+The released teacher is available from the
+[Hugging Face Hub](https://huggingface.co/anime-song/tsumugi-mrl-symbolic-teacher):
+
+```python
+from train.symbolic_teacher.model import SymbolicTeacher
+
+teacher = SymbolicTeacher.from_pretrained("anime-song/tsumugi-mrl-symbolic-teacher")
+```
+
+Use `from_checkpoint` for local training `.pt` files and `from_pretrained` for
+the Hub release. Both return an evaluation-mode teacher; call `freeze()` before
+using it inside a pretraining model.
+
+The published teacher encodes MIDI event tokens with a 256-dimensional,
+four-layer Transformer and quantizes each 25 Hz FRAME state with eight residual
+stages of 512 entries, each projecting through a 16-dimensional codebook space.
+It emits eight codes per frame. Checkpoints from before the quantizer ran in
+FP32, or from before the RVQ reconstruction term existed, produce different
+codes and are not interchangeable.
 
 ## Use the teacher
 
