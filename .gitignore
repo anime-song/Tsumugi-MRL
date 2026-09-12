@@ -37,6 +37,9 @@ htmlcov/
 /probes/**/results/
 /probes/cache/
 
+# Local experiment helpers
+/scripts/run_probes.ps1
+
 # Locally downloaded tool distributions
 /tools/ffmpeg/
 
