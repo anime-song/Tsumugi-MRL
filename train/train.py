@@ -18,7 +18,19 @@ from train.mel_rvq.model import MelRVQTokenizer
 from train.pretraining import TsumugiMRLPretrainingModel
 from train.symbolic_teacher.model import SymbolicTeacher
 
-AUDIO_SETTINGS = {"d_model", "n_heads", "num_layers", "dim_feedforward", "dropout", "gradient_checkpointing"}
+AUDIO_SETTINGS = {
+    "d_model",
+    "n_heads",
+    "num_layers",
+    "dim_feedforward",
+    "dropout",
+    "gradient_checkpointing",
+    # The subsampling activations dominate the step: 512 channels need 7.7 GiB
+    # at batch 16 and a 750-frame crop, and they sit outside the gradient
+    # checkpoint, so this is the setting that decides whether a run fits.
+    "conv_channels",
+    "conv_kernel_size",
+}
 FRONTEND_SETTINGS = {"sample_rate", "audio_channels", "n_mels", "n_fft", "hop_length", "temporal_fold"}
 ABLATION_MODES = ("mel_rvq", "symbolic_teacher", "contrastive")
 DEFAULT_ABLATION = "contrastive"
