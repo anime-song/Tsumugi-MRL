@@ -357,10 +357,7 @@ def train(args: argparse.Namespace) -> None:
     else:
         ablation = requested_ablation or DEFAULT_ABLATION
         use_musical, _ = _ablation_flags(ablation)
-        if args.mel_checkpoint is None:
-            raise ValueError("A new run requires --mel-checkpoint.")
-        if use_musical and args.symbolic_checkpoint is None:
-            raise ValueError("This ablation requires --symbolic-checkpoint.")
+        # Either teacher may be omitted; load_teachers then uses the release.
         settings = json.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
         model, mel = load_teachers(
             args.mel_checkpoint,
