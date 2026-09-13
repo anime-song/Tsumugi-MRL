@@ -18,19 +18,7 @@ from train.mel_rvq.model import MelRVQTokenizer
 from train.pretraining import TsumugiMRLPretrainingModel
 from train.symbolic_teacher.model import SymbolicTeacher
 
-AUDIO_SETTINGS = {
-    "d_model",
-    "n_heads",
-    "num_layers",
-    "dim_feedforward",
-    "dropout",
-    "gradient_checkpointing",
-    # The subsampling activations dominate the step: 512 channels need 7.7 GiB
-    # at batch 16 and a 750-frame crop, and they sit outside the gradient
-    # checkpoint, so this is the setting that decides whether a run fits.
-    "conv_channels",
-    "conv_kernel_size",
-}
+AUDIO_SETTINGS = {"d_model", "n_heads", "num_layers", "dim_feedforward", "dropout", "gradient_checkpointing"}
 FRONTEND_SETTINGS = {"sample_rate", "audio_channels", "n_mels", "n_fft", "hop_length", "temporal_fold"}
 ABLATION_MODES = ("mel_rvq", "symbolic_teacher", "contrastive")
 DEFAULT_ABLATION = "contrastive"
@@ -41,16 +29,12 @@ def _loss_metric_name(name: str) -> str:
 
 
 def compile_audio_encoder(model: TsumugiMRLPretrainingModel) -> None:
-    """Compile the Conformer and the convolutional subsampling.
+    """Compile only the Transformer inside MaskedAudioEncoder."""
 
-    The subsampling earns its own compilation: at a 750-frame crop it costs
-    about as much as the whole Conformer, so compiling both takes roughly 18%
-    off the step against eager, and less memory with it.
-    """
-
-    encoder = model.audio_encoder
-    encoder.encoder.forward = torch.compile(encoder.encoder.forward, mode="default")
-    encoder.subsampling.forward = torch.compile(encoder.subsampling.forward, mode="default")
+    model.audio_encoder.encoder.forward = torch.compile(
+        model.audio_encoder.encoder.forward,
+        mode="default",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -143,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--compile-encoder",
         action="store_true",
-        help="Compile the audio encoder's Conformer and subsampling with torch.compile(mode='default').",
+        help="Compile only MaskedAudioEncoder.encoder with torch.compile(mode='default').",
     )
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases logging.")
     parser.add_argument("--wandb-project", default="tsumugi-mrl-pretraining")

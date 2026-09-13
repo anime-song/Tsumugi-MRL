@@ -123,8 +123,7 @@ Then pass `datasets/symbolic/pretraining_cache/manifest.json` to
 loading the large symbolic-teacher target tensors.
 
 On CUDA, `--amp-dtype auto` is enabled by default. Add `--compile-encoder` to
-compile the audio encoder's Conformer and convolutional subsampling with
-`torch.compile(mode="default")`.
+compile only `MaskedAudioEncoder.encoder` with `torch.compile(mode="default")`.
 Add `--wandb` to log training and epoch losses; set the project, run name, and
 entity with `--wandb-project`, `--wandb-name`, and `--wandb-entity`.
 

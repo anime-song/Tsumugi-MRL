@@ -9,8 +9,8 @@ from huggingface_hub import PyTorchModelHubMixin
 from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint
 
-from .conformer import Conformer
 from .config import ModelConfig
+from .transformer import Transformer
 
 
 def _checkpoint(function: Callable[[Tensor], Tensor], x: Tensor, *, enabled: bool) -> Tensor:
@@ -107,130 +107,28 @@ class StereoMelFrontend(nn.Module):
         )  # [B, T_a, D_mel], D_mel = temporal_fold * C * n_mels
         return (mel - self.mel_mean) / self.mel_std.clamp_min(1e-6)
 
-    def unfold(self, features: Tensor) -> Tensor:
-        """Undo the temporal fold: ``[B, T_a, D_mel] -> [B, C, n_mels, F_mel]``.
-
-        The folded view is what the acoustic teacher quantizes and what the
-        feature cache stores, so the frontend keeps producing it. The
-        convolutional subsampling wants the spectrogram back; folding is a
-        pure reshape, so nothing is lost in either direction.
-        """
-
-        expected = self.temporal_fold * self.audio_channels * self.n_mels
-        if features.ndim != 3 or features.size(-1) != expected:
-            raise ValueError(f"features must have shape [batch, tokens, {expected}], got {tuple(features.shape)}.")
-
-        batch, tokens, _ = features.shape
-        # forward() packs the feature axis as (fold, channel, mel), so reading
-        # it back in that order and moving time last recovers the spectrogram.
-        features = features.reshape(batch, tokens, self.temporal_fold, self.audio_channels, self.n_mels)
-        features = features.permute(0, 3, 4, 1, 2)
-        return features.reshape(batch, self.audio_channels, self.n_mels, tokens * self.temporal_fold)
-
-
-class ResidualConvBlock(nn.Module):
-    """Two 3x3 convolutions over a Mel spectrogram, with a strided skip path.
-
-    The block halves the frequency axis and divides the time axis by
-    ``time_stride``. Both paths are strided, so the skip connection is a
-    projection rather than an identity.
-    """
-
-    def __init__(self, in_channels: int, out_channels: int, time_stride: int) -> None:
-        super().__init__()
-        stride = (2, time_stride)
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
-        self.norm1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-        self.norm2 = nn.BatchNorm2d(out_channels)
-        self.skip = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
-        self.skip_norm = nn.BatchNorm2d(out_channels)
-        self.activation = nn.ReLU()
-
-    def forward(self, x: Tensor) -> Tensor:
-        hidden = self.activation(self.norm1(self.conv1(x)))
-        hidden = self.norm2(self.conv2(hidden))
-        return self.activation(hidden + self.skip_norm(self.skip(x)))
-
-
-class Conv2dSubsampling(nn.Module):
-    """Turn a Mel spectrogram into encoder tokens.
-
-    ``[B, C, n_mels, F_mel] -> [B, F_mel // temporal_fold, D_a]``.
-
-    Two residual blocks quarter the frequency axis and divide the time axis
-    by ``temporal_fold``; the surviving frequency bands are then flattened
-    into one vector per token. Compared with a linear projection of folded
-    Mel frames, this gives each token a local receptive field over both time
-    and frequency before any attention runs, which is how MuQ reads its
-    spectrogram.
-    """
-
-    def __init__(
-        self,
-        audio_channels: int,
-        n_mels: int,
-        hidden_channels: int,
-        d_model: int,
-        temporal_fold: int,
-    ) -> None:
-        super().__init__()
-        if n_mels % 4:
-            raise ValueError("n_mels must be a multiple of four; each block halves the frequency axis.")
-        if temporal_fold not in (1, 2, 4):
-            raise ValueError("temporal_fold must be 1, 2 or 4 so two blocks can divide the time axis.")
-
-        # Spread the time reduction over the two blocks: 4 -> (2, 2), 2 -> (2, 1).
-        first_stride = min(temporal_fold, 2)
-        self.blocks = nn.Sequential(
-            ResidualConvBlock(audio_channels, hidden_channels, first_stride),
-            ResidualConvBlock(hidden_channels, hidden_channels, temporal_fold // first_stride),
-        )
-        self.projection = nn.Linear(hidden_channels * (n_mels // 4), d_model)
-
-    def forward(self, mel: Tensor) -> Tensor:
-        if mel.ndim != 4:
-            raise ValueError("mel must have shape [batch, channels, mels, frames].")
-
-        # [B, C, n_mels, F_mel] -> [B, hidden, n_mels // 4, T_a]
-        hidden = self.blocks(mel)
-        # Every band of every channel contributes to the token: [B, T_a, hidden * n_mels // 4]
-        hidden = hidden.permute(0, 3, 1, 2).flatten(2)
-        return self.projection(hidden)
-
-
 class MaskedAudioEncoder(nn.Module):
     """MuQ-style masked audio encoder for stereo 22.05 kHz audio.
 
-    The frontend creates a 50 Hz Mel spectrogram, the convolutional
-    subsampling turns it into 25 Hz tokens, and the Conformer maps those to
-    shared hidden states ``[B, T_a, D_a]``.
+    The frontend creates 25 Hz audio tokens.  The projection and Transformer
+    then map ``[B, T_a, D_mel]`` to shared hidden states ``[B, T_a, D_a]``.
     """
 
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.use_gradient_checkpoint = bool(config.gradient_checkpointing)
-        self.temporal_fold = config.temporal_fold
         self.frontend = StereoMelFrontend(config)
-        self.subsampling = Conv2dSubsampling(
-            audio_channels=config.audio_channels,
-            n_mels=config.n_mels,
-            hidden_channels=config.conv_channels,
-            d_model=config.d_model,
-            temporal_fold=config.temporal_fold,
-        )
-        # One learned Mel column replaces a masked frame. It has to be applied
-        # before the convolution: afterwards a token has already mixed in its
-        # neighbours, so what the model is asked to predict would be part of
-        # its own input.
-        self.mask_token = nn.Parameter(torch.zeros(config.audio_channels, config.n_mels))
-        self.encoder = Conformer(
+        frontend_dim = config.temporal_fold * config.audio_channels * config.n_mels
+        self.input_projection = nn.Linear(frontend_dim, config.d_model)
+        self.mask_token = nn.Parameter(torch.zeros(config.d_model))
+        self.encoder = Transformer(
             input_dim=config.d_model,
+            head_dim=config.d_model // config.n_heads,
             num_heads=config.n_heads,
             num_layers=config.num_layers,
             ffn_hidden_size_factor=config.dim_feedforward // config.d_model,
-            conv_kernel_size=config.conv_kernel_size,
             dropout=config.dropout,
+            output_norm=True,
         )
 
     def set_mel_stats(self, mean: float, std: float) -> None:
@@ -247,32 +145,21 @@ class MaskedAudioEncoder(nn.Module):
     ) -> Tensor:
         # [B, C, S] -> [B, T_a, D_mel] -> [B, T_a, D_a].
         # Pretraining can pass the Mel features already computed for the
-        # acoustic teacher so the expensive STFT is not repeated. Those are
-        # stored folded, which ``unfold`` reverses exactly.
+        # acoustic teacher so the expensive STFT is not repeated.
         if mel_features is None:
             if audio is None:
                 raise ValueError("audio is required when mel_features is not provided.")
             x = self.frontend(audio)
         else:
             x = mel_features
-        # [B, T_a, D_mel] -> [B, C, n_mels, F_mel] at the pre-subsampling rate.
-        mel = self.frontend.unfold(x)
+        x = self.input_projection(x)
 
         if mask is not None:
-            # ``mask`` is [B, T_a], one flag per output token; each token covers
-            # ``temporal_fold`` Mel frames. Targets stay unchanged.
-            tokens = mel.size(-1) // self.temporal_fold
-            if mask.shape != (mel.size(0), tokens):
-                raise ValueError(f"mask must have shape {(mel.size(0), tokens)}, got {tuple(mask.shape)}.")
-            frame_mask = mask.bool().repeat_interleave(self.temporal_fold, dim=1)
-            mel = torch.where(
-                frame_mask[:, None, None, :],
-                self.mask_token[None, :, :, None],
-                mel,
-            )
-
-        # [B, C, n_mels, F_mel] -> [B, T_a, D_a].
-        x = self.subsampling(mel)
+            # ``mask`` is [B, T_a].  Replace selected audio tokens with one
+            # learned vector before self-attention; targets stay unchanged.
+            if mask.shape != x.shape[:2]:
+                raise ValueError(f"mask must have shape {tuple(x.shape[:2])}, got {tuple(mask.shape)}.")
+            x = torch.where(mask.unsqueeze(-1), self.mask_token.view(1, 1, -1), x)
 
         # Transformer.py expects True for an allowed key position, while this
         # module exposes the usual padding convention: True means padding.
@@ -282,7 +169,7 @@ class MaskedAudioEncoder(nn.Module):
         def encode(hidden: Tensor) -> Tensor:
             return self.encoder(hidden, attention_mask=attention_mask)
 
-        # Conformer: [B, T_a, D_a] -> [B, T_a, D_a].
+        # Custom RoPE Transformer: [B, T_a, D_a] -> [B, T_a, D_a].
         x = _checkpoint(encode, x, enabled=use_checkpoint)
         if padding_mask is not None:
             # Keep padded rows from entering pooling or contrastive learning.
