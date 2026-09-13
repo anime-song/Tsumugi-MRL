@@ -9,8 +9,7 @@ downstream tasks.
 ![Tsumugi-MRL architecture](docs/architecture.svg)
 
 During pretraining, an audio Transformer predicts acoustic and symbolic RVQ
-codes from masked audio. A contrastive objective aligns audio and MIDI clip
-embeddings. Both teachers process the corresponding unmasked clip.
+codes from masked audio. Both teachers process the corresponding unmasked clip.
 
 The acoustic teacher quantizes Mel features. The symbolic teacher encodes MIDI
 events and learns discrete codes by reconstructing notes, instruments, rhythm,
@@ -59,13 +58,13 @@ teacher.
 
 Train with the preparation manifest. Both teachers default to their published
 releases, so a fresh checkout needs no local teacher checkpoints. The default
-`contrastive` mode uses all three objectives:
+`symbolic_teacher` mode uses both objectives:
 
 ```powershell
 uv run --extra train python -m train.train `
   --manifest datasets/symbolic/manifest.json `
   --output-dir checkpoints/pretraining `
-  --batch-size 16 --epochs 10 --num-workers 4 --ablation contrastive
+  --batch-size 16 --epochs 10 --num-workers 4 --ablation symbolic_teacher
 ```
 
 The teachers are downloaded from
@@ -81,9 +80,8 @@ Use `--ablation` to select the cumulative objective set:
 * `mel_rvq`: Mel-RVQ acoustic prediction only; `--symbolic-checkpoint` is not
   required.
 * `symbolic_teacher`: acoustic prediction plus symbolic RVQ code prediction.
-* `contrastive`: the previous two objectives plus Audio--MIDI contrastive loss.
 
-The default loss weights are 1.0, 0.5, and 0.2, respectively. Set
+The default loss weights are 1.0 and 0.5, respectively. Set
 `--crop-frames`, `--mask-ratio`, and `--mask-span` to change cropping and
 masking. Batches require at least two pairs; the final incomplete batch is
 dropped. Short clips are padded, and padding is excluded from attention,
@@ -182,8 +180,7 @@ model.export_audio_model().save_pretrained("checkpoints/audio_model")
 
 For training, apply frame masks to the audio encoder and pass the masks and
 valid positions to `train.losses.PretrainingLoss`. Use unmasked clips for both
-teachers and at least two pairs per batch for the contrastive loss. Move all
-batch tensors and alignment indices to the model's device.
+teachers. Move all batch tensors and alignment indices to the model's device.
 
 Set `TrainingConfig(gradient_checkpointing=True)` to reduce activation memory
 at the cost of additional computation during backpropagation.
@@ -198,7 +195,7 @@ uv run --extra train python -m pytest -q tests
 
 Test-set F1 from frozen audio representations. The random row uses the
 random-initialized encoder, and the pretrained rows each use a 625-epoch run of
-the matching ablation; the contrastive row will be filled after evaluation.
+the matching ablation.
 Values are macro-F1 except for Ballroom, which uses binary F1, and the best
 value in each column is bold. See [linear probes](probes/README.md) for the
 probe settings and accuracy figures.
@@ -264,16 +261,6 @@ probe settings and accuracy figures.
 <td>38.66%</td>
 <td>77.12%</td>
 <td><strong>30.43%</strong></td>
-</tr>
-<tr>
-<td>+ Contrastive</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
 </tr>
 </tbody>
 </table>

@@ -20,8 +20,8 @@ from train.symbolic_teacher.model import SymbolicTeacher
 
 AUDIO_SETTINGS = {"d_model", "n_heads", "num_layers", "dim_feedforward", "dropout", "gradient_checkpointing"}
 FRONTEND_SETTINGS = {"sample_rate", "audio_channels", "n_mels", "n_fft", "hop_length", "temporal_fold"}
-ABLATION_MODES = ("mel_rvq", "symbolic_teacher", "contrastive")
-DEFAULT_ABLATION = "contrastive"
+ABLATION_MODES = ("mel_rvq", "symbolic_teacher")
+DEFAULT_ABLATION = "symbolic_teacher"
 
 
 def _loss_metric_name(name: str) -> str:
@@ -57,9 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=ABLATION_MODES,
         default=None,
         help=(
-            "Pretraining objectives: mel_rvq (acoustic only), symbolic_teacher "
-            "(+symbolic code prediction), or contrastive (+Audio--MIDI contrastive). "
-            "Defaults to contrastive."
+            "Pretraining objectives: mel_rvq (acoustic only) or symbolic_teacher "
+            "(+symbolic code prediction). Defaults to symbolic_teacher."
         ),
     )
 
@@ -238,12 +237,12 @@ def load_teachers(
     return model, mel
 
 
-def _ablation_flags(ablation: str) -> tuple[bool, bool]:
-    """Return whether symbolic targets and contrastive learning are active."""
+def _uses_symbolic(ablation: str) -> bool:
+    """Return whether the symbolic teacher supplies targets for this ablation."""
 
     if ablation not in ABLATION_MODES:
         raise ValueError(f"Unknown ablation mode: {ablation!r}")
-    return ablation != "mel_rvq", ablation == "contrastive"
+    return ablation != "mel_rvq"
 
 
 def pretraining_losses(
@@ -255,7 +254,7 @@ def pretraining_losses(
     mask_span,
     ablation=DEFAULT_ABLATION,
 ):
-    use_musical, use_contrastive = _ablation_flags(ablation)
+    use_musical = _uses_symbolic(ablation)
     # Mask only valid audio frames; padding remains excluded from the target.
     audio_mask = make_span_mask(batch["audio_padding_mask"], mask_ratio, mask_span)
 
@@ -276,8 +275,7 @@ def pretraining_losses(
     }
     if use_musical:
         # Keep the symbolic encoder/RVQ fixed while using its frame codes as
-        # targets. The symbolic projection remains trainable only for the
-        # contrastive ablation.
+        # targets.
         model_inputs.update(
             symbolic_token_ids=batch["symbolic_token_ids"],
             symbolic_token_instrument_ids=batch["symbolic_token_instrument_ids"],
@@ -298,7 +296,7 @@ def pretraining_losses(
     # Exclude padded audio frames from every prediction loss.
     valid = ~batch["audio_padding_mask"]
 
-    # Combine acoustic, symbolic, and contrastive objectives.
+    # Combine the acoustic and symbolic objectives.
     return criterion(
         output,
         acoustic_targets,
@@ -308,7 +306,6 @@ def pretraining_losses(
         acoustic_valid_mask=valid,
         musical_valid_mask=valid,
         use_musical=use_musical,
-        use_contrastive=use_contrastive,
     )
 
 
@@ -346,7 +343,7 @@ def train(args: argparse.Namespace) -> None:
         if requested_ablation is not None and requested_ablation != restored_ablation:
             raise ValueError("--resume restores the ablation mode; omit --ablation or use the saved mode.")
         ablation = restored_ablation
-        _ablation_flags(ablation)
+        _uses_symbolic(ablation)
         model = TsumugiMRLPretrainingModel(TrainingConfig(**restored["config"]))
         model.load_state_dict(restored["state_dict"])
         mel = MelRVQTokenizer(MelRVQConfig(**restored["mel_config"]))
@@ -356,7 +353,7 @@ def train(args: argparse.Namespace) -> None:
                 setattr(args, name, value)
     else:
         ablation = requested_ablation or DEFAULT_ABLATION
-        use_musical, _ = _ablation_flags(ablation)
+        use_musical = _uses_symbolic(ablation)
         # Either teacher may be omitted; load_teachers then uses the release.
         settings = json.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
         model, mel = load_teachers(
@@ -367,11 +364,11 @@ def train(args: argparse.Namespace) -> None:
         )
     args.ablation = ablation
 
-    # Freeze both teachers. Only the symbolic projection is trainable when it
-    # supplies the contrastive embedding.
+    # Freeze both teachers completely: nothing trains the symbolic projection
+    # now that the objectives are code prediction only.
     model.to(device)
     mel.to(device).eval().requires_grad_(False)
-    model.symbolic_teacher.freeze(train_projection=ablation == "contrastive")
+    model.symbolic_teacher.freeze(train_projection=False)
     if args.compile_encoder:
         compile_audio_encoder(model)
 
@@ -399,7 +396,7 @@ def train(args: argparse.Namespace) -> None:
         eps=args.adam_eps,
         weight_decay=args.weight_decay,
     )
-    criterion = PretrainingLoss(temperature=model.config.contrastive_temperature)
+    criterion = PretrainingLoss()
     dataset = PairedAudioDataset(args.manifest, model.config, args.crop_frames)
     cache_mode = "mel_features" if dataset.pairs[0].mel_path is not None else "waveform"
     if len(dataset) < args.batch_size:

@@ -111,8 +111,8 @@ model.symbolic_teacher.load_state_dict(checkpoint["state_dict"])
 model.symbolic_teacher.freeze()
 ```
 
-`freeze()` keeps the teacher fixed while its contrastive projection remains
-trainable. Call it after loading weights, and build the optimizer from
+`freeze()` fixes the teacher; pass `train_projection=False` to freeze its
+projection as well. Call it after loading weights, and build the optimizer from
 parameters with `requires_grad=True`.
 
 Compute teacher outputs from matching audio and MIDI clips. See the

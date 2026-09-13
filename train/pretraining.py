@@ -171,7 +171,7 @@ class TsumugiMRLPretrainingModel(nn.Module, PyTorchModelHubMixin):
         musical_logits = self.musical_head(hidden)
 
         # 3) Mean-pool audio frames and project to a unit-norm clip embedding
-        # for Audio--MIDI contrastive learning: [B, T_a, D_a] -> [B, D_p].
+        # as a clip-level summary: [B, T_a, D_a] -> [B, D_p].
         audio_pooled = self.mean_pool(hidden, audio_padding_mask)
         audio_embedding = self.audio_projection(audio_pooled)
 
@@ -187,7 +187,7 @@ class TsumugiMRLPretrainingModel(nn.Module, PyTorchModelHubMixin):
             # [B, L], and L is independent of T_a.  With anchors, the teacher
             # additionally returns [B, T_s, D_s], [B, T_s, N_musical], and
             # frame reconstruction heads.  Without anchors it only provides a
-            # whole-sequence embedding for contrastive learning.
+            # whole-sequence clip embedding.
             if symbolic_anchor_positions is None:
                 _, symbolic_embedding = self.symbolic_encoder(
                     symbolic_token_ids,

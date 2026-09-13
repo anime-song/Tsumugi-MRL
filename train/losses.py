@@ -42,30 +42,6 @@ def masked_multicodebook_cross_entropy(
     return (loss * active).sum() / active.sum().clamp_min(1.0)
 
 
-def symmetric_info_nce(
-    audio_embedding: Tensor,
-    symbolic_embedding: Tensor,
-    temperature: float = 0.07,
-) -> Tensor:
-    """Symmetric in-batch InfoNCE for aligned audio/MIDI segments."""
-
-    if audio_embedding.ndim != 2 or symbolic_embedding.ndim != 2:
-        raise ValueError("Embeddings must have shape [batch, dimension].")
-    if audio_embedding.shape != symbolic_embedding.shape:
-        raise ValueError(
-            "Audio and symbolic embeddings must have identical shape, "
-            f"got {tuple(audio_embedding.shape)} and {tuple(symbolic_embedding.shape)}."
-        )
-    if temperature <= 0:
-        raise ValueError("temperature must be positive.")
-
-    audio_embedding = F.normalize(audio_embedding, dim=-1)
-    symbolic_embedding = F.normalize(symbolic_embedding, dim=-1)
-    logits = audio_embedding @ symbolic_embedding.transpose(0, 1) / temperature
-    labels = torch.arange(logits.size(0), device=logits.device)
-    return 0.5 * (F.cross_entropy(logits, labels) + F.cross_entropy(logits.t(), labels))
-
-
 def symbolic_frame_reconstruction_loss(
     predictions: dict[str, Tensor],
     targets: SymbolicFrameTargets,
@@ -194,14 +170,10 @@ class PretrainingLoss(nn.Module):
         self,
         acoustic_weight: float = 1.0,
         musical_weight: float = 0.5,
-        contrastive_weight: float = 0.2,
-        temperature: float = 0.07,
     ) -> None:
         super().__init__()
         self.acoustic_weight = acoustic_weight
         self.musical_weight = musical_weight
-        self.contrastive_weight = contrastive_weight
-        self.temperature = temperature
 
     def forward(
         self,
@@ -213,7 +185,6 @@ class PretrainingLoss(nn.Module):
         acoustic_valid_mask: Optional[Tensor] = None,
         musical_valid_mask: Optional[Tensor] = None,
         use_musical: bool = True,
-        use_contrastive: bool = True,
     ) -> dict[str, Tensor]:
         acoustic = masked_multicodebook_cross_entropy(
             output.acoustic_logits,
@@ -237,15 +208,6 @@ class PretrainingLoss(nn.Module):
             )
             total = total + self.musical_weight * musical
             result["loss_musical"] = musical
-
-        if use_contrastive and output.symbolic_embedding is not None:
-            contrastive = symmetric_info_nce(
-                output.audio_embedding,
-                output.symbolic_embedding,
-                temperature=self.temperature,
-            )
-            total = total + self.contrastive_weight * contrastive
-            result["loss_contrastive"] = contrastive
 
         result["loss_total"] = total
         return result

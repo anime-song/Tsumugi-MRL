@@ -310,7 +310,7 @@ class SymbolicTeacher(nn.Module, PyTorchModelHubMixin):
         return self(*args, **kwargs).codes
 
     def freeze(self, train_projection: bool = True) -> None:
-        """Fix RVQ targets while allowing the contrastive projection to learn.
+        """Fix RVQ targets, optionally leaving the clip projection trainable.
 
         Pass ``train_projection=False`` for completely frozen inference.
         Call this after loading the separately trained teacher checkpoint.

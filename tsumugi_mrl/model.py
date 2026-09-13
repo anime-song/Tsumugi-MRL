@@ -172,13 +172,13 @@ class MaskedAudioEncoder(nn.Module):
         # Custom RoPE Transformer: [B, T_a, D_a] -> [B, T_a, D_a].
         x = _checkpoint(encode, x, enabled=use_checkpoint)
         if padding_mask is not None:
-            # Keep padded rows from entering pooling or contrastive learning.
+            # Keep padded rows from entering pooling or any downstream head.
             x = x.masked_fill(padding_mask.unsqueeze(-1), 0.0)
         return x
 
 
 class ProjectionHead(nn.Module):
-    """Map pooled hidden states to unit-normalized contrastive embeddings."""
+    """Map pooled hidden states to unit-normalized clip embeddings."""
 
     def __init__(self, input_dim: int, output_dim: int) -> None:
         super().__init__()

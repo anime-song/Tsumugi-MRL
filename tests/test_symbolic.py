@@ -309,7 +309,6 @@ def test_binary_reconstruction_averages_classes_and_ignores_padding(tmp_path):
 
 def test_frozen_teacher_projection_learns_without_changing_codes():
     from train.pretraining import TsumugiMRLPretrainingModel as TsumugiMRLModel
-    from train.losses import symmetric_info_nce
 
     torch.manual_seed(12)
     model = TsumugiMRLModel(_small_config())
@@ -324,7 +323,7 @@ def test_frozen_teacher_projection_learns_without_changing_codes():
     repeated = teacher(inputs, anchors, torch.full_like(inputs, NO_INSTRUMENT_ID))
     assert torch.equal(before.quantized, repeated.quantized)
     audio_embedding = model.audio_projection(torch.randn(2, model.config.d_model))
-    loss = symmetric_info_nce(audio_embedding, before.embedding)
+    loss = (audio_embedding * before.embedding).sum()
     loss.backward()
     for name, parameter in teacher.named_parameters():
         if name.startswith("encoder.projection."):

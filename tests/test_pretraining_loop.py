@@ -91,7 +91,7 @@ def test_pretraining_parser_accepts_wandb_options():
     assert args.wandb_entity == "entity"
 
 
-def test_padded_batch_updates_student_and_projection_only(training_files):
+def test_padded_batch_updates_only_the_student(training_files):
     config, manifest, mel_path, symbolic_path = training_files
     dataset = PairedAudioDataset(manifest, config, crop_frames=20)
     assert len(dataset) == 2
@@ -99,21 +99,21 @@ def test_padded_batch_updates_student_and_projection_only(training_files):
     assert batch["audio_padding_mask"][0].any()
     assert not batch["audio_padding_mask"][1].any()
     model, mel = load_teachers(mel_path, symbolic_path, {})
-    model.symbolic_teacher.freeze()
+    model.symbolic_teacher.freeze(train_projection=False)
     mel.requires_grad_(False)
     model.train()
     original = {k: v.clone() for k, v in model.symbolic_teacher.state_dict().items()}
     losses = pretraining_losses(model, mel, batch, PretrainingLoss(), 0.5, 3)
-    assert set(losses) == {"loss_total", "loss_acoustic", "loss_musical", "loss_contrastive"}
+    assert set(losses) == {"loss_total", "loss_acoustic", "loss_musical"}
     losses["loss_total"].backward()
     assert model.audio_encoder.input_projection.weight.grad.abs().sum() > 0
-    assert model.symbolic_teacher.encoder.projection.net[0].weight.grad.abs().sum() > 0
+    # Both teachers only supply targets now, so no gradient may reach either.
+    assert all(p.grad is None for p in model.symbolic_teacher.parameters())
     assert all(p.grad is None for p in mel.parameters())
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad))
     optimizer.step()
     for name, value in model.symbolic_teacher.state_dict().items():
-        if not name.startswith("encoder.projection."):
-            assert torch.equal(value, original[name])
+        assert torch.equal(value, original[name])
     assert not model.symbolic_teacher.encoder.training
 
 
@@ -175,7 +175,6 @@ def test_ablation_modes_select_only_requested_losses(training_files):
     expected_losses = {
         "mel_rvq": {"loss_total", "loss_acoustic"},
         "symbolic_teacher": {"loss_total", "loss_acoustic", "loss_musical"},
-        "contrastive": {"loss_total", "loss_acoustic", "loss_musical", "loss_contrastive"},
     }
 
     for ablation, expected in expected_losses.items():
@@ -186,7 +185,7 @@ def test_ablation_modes_select_only_requested_losses(training_files):
             {},
             use_symbolic=use_symbolic,
         )
-        model.symbolic_teacher.freeze(train_projection=ablation == "contrastive")
+        model.symbolic_teacher.freeze(train_projection=False)
         mel.requires_grad_(False)
         model.train()
         losses = pretraining_losses(
